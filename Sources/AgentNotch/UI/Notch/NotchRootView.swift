@@ -235,6 +235,9 @@ private struct ExpandedContent: View {
                     }
                 }
             }
+            // Bottom inset so the last row clears the notch shape's curved
+            // shoulders instead of slamming into them.
+            .padding(.bottom, 18)
             .animation(NotchMotion.row, value: viewModel.sessions.map(\.id))
         }
         .scrollContentBackground(.hidden)
@@ -361,9 +364,17 @@ private struct SessionRow: View {
     let onActivate: () -> Void
 
     @State private var hovering = false
-    @State private var pressed = false
 
     var body: some View {
+        Button(action: onActivate) {
+            rowContent
+        }
+        .buttonStyle(SessionRowButtonStyle(needsAttention: session.needsAttention, hovering: hovering))
+        .onHover { hovering = $0 }
+        .help(focusHelp)
+    }
+
+    private var rowContent: some View {
         HStack(spacing: 10) {
             HarnessIcon(harness: session.harness, size: 26)
 
@@ -407,30 +418,7 @@ private struct SessionRow: View {
         }
         .padding(.horizontal, 10)
         .padding(.vertical, 8)
-        .background(rowBackground)
-        .overlay(alignment: .leading) {
-            if session.needsAttention {
-                Capsule(style: .continuous)
-                    .fill(NotchPalette.attention)
-                    .frame(width: 2.5)
-                    .padding(.vertical, 9)
-                    .shadow(color: NotchPalette.attention.opacity(0.7), radius: 4)
-            }
-        }
-        .scaleEffect(pressed ? 0.98 : (hovering ? 1.012 : 1.0))
-        .animation(NotchMotion.hover, value: hovering)
-        .animation(.spring(response: 0.22, dampingFraction: 0.72), value: pressed)
-        .onHover { hovering = $0 }
         .contentShape(Rectangle())
-        .onTapGesture {
-            onActivate()
-        }
-        .simultaneousGesture(
-            DragGesture(minimumDistance: 0)
-                .onChanged { _ in pressed = true }
-                .onEnded { _ in pressed = false }
-        )
-        .help(focusHelp)
     }
 
     private var focusHelp: String {
@@ -440,14 +428,57 @@ private struct SessionRow: View {
         return "Focus terminal"
     }
 
-    @ViewBuilder
-    private var rowBackground: some View {
-        let shape = RoundedRectangle(cornerRadius: 9, style: .continuous)
-        ZStack {
-            shape
-                .fill(.white.opacity(session.needsAttention ? 0.085 : (hovering ? 0.07 : 0.045)))
+    private func relativeTime(_ date: Date) -> String {
+        let seconds = max(0, Int(Date().timeIntervalSince(date)))
+        if seconds < 5 { return "now" }
+        if seconds < 60 { return "\(seconds)s" }
+        let minutes = seconds / 60
+        if minutes < 60 { return "\(minutes)m" }
+        let hours = minutes / 60
+        if hours < 24 { return "\(hours)h" }
+        return "\(hours / 24)d"
+    }
+}
 
-            if session.needsAttention {
+// MARK: - Row button style
+
+/// Owns press/hover visuals so the underlying `Button` can drive activation
+/// reliably (no fighting with the parent `ScrollView`'s drag gesture).
+private struct SessionRowButtonStyle: ButtonStyle {
+    let needsAttention: Bool
+    let hovering: Bool
+
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .background(background(pressed: configuration.isPressed))
+            .overlay(alignment: .leading) {
+                if needsAttention {
+                    Capsule(style: .continuous)
+                        .fill(NotchPalette.attention)
+                        .frame(width: 2.5)
+                        .padding(.vertical, 9)
+                        .shadow(color: NotchPalette.attention.opacity(0.7), radius: 4)
+                }
+            }
+            .scaleEffect(configuration.isPressed ? 0.97 : (hovering ? 1.012 : 1.0))
+            .animation(NotchMotion.hover, value: hovering)
+            .animation(.spring(response: 0.22, dampingFraction: 0.72), value: configuration.isPressed)
+    }
+
+    @ViewBuilder
+    private func background(pressed: Bool) -> some View {
+        let shape = RoundedRectangle(cornerRadius: 9, style: .continuous)
+        let baseOpacity: Double = {
+            if pressed { return 0.13 }
+            if needsAttention { return 0.085 }
+            if hovering { return 0.07 }
+            return 0.045
+        }()
+
+        ZStack {
+            shape.fill(.white.opacity(baseOpacity))
+
+            if needsAttention {
                 shape
                     .fill(
                         LinearGradient(
@@ -461,20 +492,8 @@ private struct SessionRow: View {
                     )
             }
 
-            shape
-                .stroke(.white.opacity(0.05), lineWidth: 0.5)
+            shape.stroke(.white.opacity(0.05), lineWidth: 0.5)
         }
-    }
-
-    private func relativeTime(_ date: Date) -> String {
-        let seconds = max(0, Int(Date().timeIntervalSince(date)))
-        if seconds < 5 { return "now" }
-        if seconds < 60 { return "\(seconds)s" }
-        let minutes = seconds / 60
-        if minutes < 60 { return "\(minutes)m" }
-        let hours = minutes / 60
-        if hours < 24 { return "\(hours)h" }
-        return "\(hours / 24)d"
     }
 }
 

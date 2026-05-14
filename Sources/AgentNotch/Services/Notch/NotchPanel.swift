@@ -44,4 +44,13 @@ final class NotchHostingView<Content: View>: NSHostingView<Content> {
         guard hitTestProvider(point) else { return nil }
         return super.hitTest(point)
     }
+
+    /// Critical for non-activating panels: without this the very first click
+    /// on a SwiftUI control is swallowed activating the panel rather than
+    /// dispatching to the control. Returning true means we accept the first
+    /// mouse-down even when the window isn't key, so Buttons fire on the
+    /// initial click instead of needing two.
+    override func acceptsFirstMouse(for event: NSEvent?) -> Bool {
+        true
+    }
 }
