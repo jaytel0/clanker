@@ -4,6 +4,20 @@ import SwiftUI
 
 @MainActor
 final class NotchWindowController: NSWindowController {
+    /// Maximum panel canvas. The notch silhouette animates inside this canvas
+    /// in pure SwiftUI — the AppKit window itself never resizes, which is what
+    /// makes the morph buttery smooth.
+    static let canvasWidth: CGFloat = 620
+    static let canvasHeight: CGFloat = 460
+
+    /// Closed-state notch dimensions.
+    static let closedWidth: CGFloat = 248
+    static let closedHeight: CGFloat = 32
+
+    /// Expanded-state notch dimensions.
+    static let expandedWidth: CGFloat = 580
+    static let expandedHeight: CGFloat = 380
+
     private let screen: NSScreen
     private let viewModel: NotchViewModel
     private var cancellables = Set<AnyCancellable>()
@@ -12,39 +26,58 @@ final class NotchWindowController: NSWindowController {
         self.screen = screen
         self.viewModel = viewModel
 
-        let panel = NotchPanel(contentRect: Self.frame(on: screen, expanded: false))
-        let content = NotchRootView(viewModel: viewModel)
-        panel.contentViewController = NSHostingController(rootView: content)
+        let frame = Self.canvasFrame(on: screen)
+        let panel = NotchPanel(contentRect: frame)
+
+        let rootView = NotchRootView(viewModel: viewModel)
+        let hostingView = NotchHostingView(rootView: rootView)
+        hostingView.frame = NSRect(origin: .zero, size: frame.size)
+        hostingView.autoresizingMask = [.width, .height]
+
+        // Hit-test only the visible notch silhouette so menu-bar clicks pass
+        // through everywhere else.
+        hostingView.hitTestProvider = { [weak viewModel] point in
+            guard let viewModel else { return false }
+            let canvasSize = NSSize(width: Self.canvasWidth, height: Self.canvasHeight)
+            let interactiveSize = viewModel.isExpanded
+                ? NSSize(width: Self.expandedWidth, height: Self.expandedHeight)
+                : NSSize(width: Self.closedWidth, height: Self.closedHeight)
+            // The notch sits flush with the top of the canvas, horizontally
+            // centered. AppKit windows are bottom-up so "top" is maxY.
+            let originX = (canvasSize.width - interactiveSize.width) / 2
+            let originY = canvasSize.height - interactiveSize.height
+            let interactiveRect = NSRect(
+                x: originX,
+                y: originY,
+                width: interactiveSize.width,
+                height: interactiveSize.height
+            )
+            return interactiveRect.contains(point)
+        }
+
+        let controller = NSViewController()
+        controller.view = hostingView
+        panel.contentViewController = controller
+
         super.init(window: panel)
 
         viewModel.$isExpanded
+            .removeDuplicates()
             .receive(on: DispatchQueue.main)
-            .sink { [weak self] expanded in
-                self?.resize(expanded: expanded)
+            .sink { _ in
+                hostingView.window?.invalidateShadow()
             }
             .store(in: &cancellables)
     }
 
-    required init?(coder: NSCoder) {
-        nil
-    }
+    required init?(coder: NSCoder) { nil }
 
-    private func resize(expanded: Bool) {
-        guard let window else { return }
-        window.setFrame(Self.frame(on: screen, expanded: expanded), display: true, animate: true)
-        if expanded {
-            window.makeKey()
-        }
-    }
-
-    private static func frame(on screen: NSScreen, expanded: Bool) -> NSRect {
-        let width: CGFloat = expanded ? 560 : 268
-        let height: CGFloat = expanded ? 360 : 36
-        return NSRect(
-            x: screen.frame.midX - width / 2,
-            y: screen.frame.maxY - height,
-            width: width,
-            height: height
+    private static func canvasFrame(on screen: NSScreen) -> NSRect {
+        NSRect(
+            x: screen.frame.midX - canvasWidth / 2,
+            y: screen.frame.maxY - canvasHeight,
+            width: canvasWidth,
+            height: canvasHeight
         )
     }
 }

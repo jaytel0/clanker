@@ -14,7 +14,7 @@ struct AgentNotchApp: App {
 
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
-    private let sessionStore = MockSessionStore()
+    private let sessionStore = LocalSessionStore()
     private var notchController: NotchWindowController?
     private var statusItem: NSStatusItem?
 

@@ -10,7 +10,7 @@ enum HarnessID: String, CaseIterable, Identifiable, Sendable {
 
     var displayName: String {
         switch self {
-        case .codex: "Codex"
+        case .codex: "OpenAI Codex"
         case .claude: "Claude"
         case .pi: "Pi"
         case .terminal: "Terminal"
@@ -19,9 +19,9 @@ enum HarnessID: String, CaseIterable, Identifiable, Sendable {
 
     var symbolName: String {
         switch self {
-        case .codex: "sparkles"
-        case .claude: "moon.stars.fill"
-        case .pi: "chart.line.uptrend.xyaxis"
+        case .codex: "circle.hexagongrid.fill"
+        case .claude: "sparkle.magnifyingglass"
+        case .pi: "pi"
         case .terminal: "apple.terminal.fill"
         }
     }
@@ -61,7 +61,7 @@ enum SessionStatusKind: String, Sendable {
 }
 
 struct AgentSession: Identifiable, Equatable, Sendable {
-    let id: UUID
+    let id: String
     var title: String
     var projectName: String
     var cwd: String
@@ -69,6 +69,11 @@ struct AgentSession: Identifiable, Equatable, Sendable {
     var status: SessionStatusKind
     var preview: String
     var lastActivity: Date
+    var pid: Int?
+    var terminalName: String?
+    /// Path to the controlling tty for the shell, e.g. `/dev/ttys004`. Used by
+    /// `TerminalFocusService` to find the matching window/tab.
+    var tty: String?
 
     var needsAttention: Bool {
         status.needsAttention

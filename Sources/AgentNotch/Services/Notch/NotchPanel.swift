@@ -1,5 +1,7 @@
 import AppKit
+import SwiftUI
 
+/// A non-activating panel that floats above the menu bar across all spaces.
 final class NotchPanel: NSPanel {
     init(contentRect: NSRect) {
         super.init(
@@ -17,10 +19,29 @@ final class NotchPanel: NSPanel {
         titleVisibility = .hidden
         titlebarAppearsTransparent = true
         isMovable = false
+        isMovableByWindowBackground = false
+        ignoresMouseEvents = false
         level = .mainMenu + 3
         collectionBehavior = [.fullScreenAuxiliary, .stationary, .canJoinAllSpaces, .ignoresCycle]
     }
 
     override var canBecomeKey: Bool { true }
     override var canBecomeMain: Bool { false }
+}
+
+/// A hosting view that only intercepts mouse events when the click lands inside
+/// the SwiftUI content's reported "interactive" region. Anywhere else the
+/// click falls through to whatever is behind the panel — the menu bar,
+/// desktop, or another window.
+///
+/// We treat the entire bounds as opaque to mouse events when the notch is
+/// expanded (so scroll gestures, hover-tracking and click work everywhere
+/// inside the panel) and only the centered notch silhouette when it's closed.
+final class NotchHostingView<Content: View>: NSHostingView<Content> {
+    var hitTestProvider: (NSPoint) -> Bool = { _ in true }
+
+    override func hitTest(_ point: NSPoint) -> NSView? {
+        guard hitTestProvider(point) else { return nil }
+        return super.hitTest(point)
+    }
 }
