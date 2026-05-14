@@ -18,6 +18,7 @@ Packages/
 Package.resolved
 
 # App/package outputs
+dist/
 *.app
 *.dmg
 *.pkg

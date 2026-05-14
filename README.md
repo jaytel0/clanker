@@ -7,5 +7,18 @@ The build contract lives in [spec.md](./spec.md). It defines the product scope, 
 Current state:
 
 - Specification complete enough to build against.
-- No app implementation exists yet.
-- Nothing is launchable or installable yet.
+- SwiftPM macOS scaffold exists.
+- `script/build_and_run.sh` builds and stages `dist/AgentNotch.app`.
+- The app currently launches a dynamic-notch shell with mock sessions; real harness adapters are specified but not implemented yet.
+
+Run locally:
+
+```bash
+./script/build_and_run.sh
+```
+
+Install locally:
+
+```bash
+./script/build_and_run.sh --install
+```
