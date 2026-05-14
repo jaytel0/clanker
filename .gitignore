@@ -1,0 +1,33 @@
+# macOS
+.DS_Store
+*.swp
+*.swo
+
+# Xcode
+DerivedData/
+build/
+*.xcuserstate
+xcuserdata/
+*.moved-aside
+*.xcworkspace/xcshareddata/WorkspaceSettings.xcsettings
+*.xcworkspace/xcuserdata/
+
+# Swift Package Manager
+.build/
+Packages/
+Package.resolved
+
+# App/package outputs
+*.app
+*.dmg
+*.pkg
+*.zip
+
+# Logs and diagnostics
+*.log
+diagnostics/
+
+# Local secrets/config
+.env
+.env.*
+Config/LocalSecrets.xcconfig
