@@ -175,15 +175,6 @@ private struct ExpandedContent: View {
             ExpandedHeader(viewModel: viewModel, namespace: namespace)
                 .padding(.horizontal, Self.edgeInset)
 
-            PaneTabBar(
-                selected: viewModel.selectedPane,
-                sessionsCount: viewModel.sessions.count,
-                recentsCount: viewModel.recents.count,
-                attentionCount: viewModel.attentionCount,
-                onSelect: { viewModel.selectPane($0) }
-            )
-            .padding(.horizontal, Self.edgeInset)
-
             paneContent
         }
     }
@@ -371,37 +362,32 @@ private struct ExpandedHeader: View {
     let namespace: Namespace.ID?
 
     var body: some View {
-        HStack(spacing: 10) {
-            HarnessIconStack(
-                harnesses: viewModel.representativeHarnesses,
-                size: 22,
-                namespace: namespace
+        HStack(spacing: 6) {
+            PaneTabBar(
+                selected: viewModel.selectedPane,
+                sessionsCount: viewModel.sessions.count,
+                recentsCount: viewModel.recents.count,
+                attentionCount: viewModel.attentionCount,
+                onSelect: { viewModel.selectPane($0) }
             )
-
-            Text("Clanker")
-                .font(.system(size: 13, weight: .semibold))
-                .tracking(-0.1)
-                .foregroundStyle(.white)
 
             Spacer(minLength: 8)
 
-            HStack(spacing: 6) {
-                if viewModel.attentionCount > 0 {
-                    HeaderPill(
-                        text: "\(viewModel.attentionCount) attention",
-                        tint: NotchPalette.attention,
-                        leadingDot: true
-                    )
-                }
-                if viewModel.updateManager.availableUpdate != nil || viewModel.updateManager.state.isBusy {
-                    UpdatePill(updateManager: viewModel.updateManager)
-                }
-                DisplayLockButton()
-                SettingsCogButton(
-                    updateManager: viewModel.updateManager,
-                    onShowOnboarding: viewModel.onShowOnboarding ?? {}
+            if viewModel.attentionCount > 0 {
+                HeaderPill(
+                    text: "\(viewModel.attentionCount) attention",
+                    tint: NotchPalette.attention,
+                    leadingDot: true
                 )
             }
+            if viewModel.updateManager.availableUpdate != nil || viewModel.updateManager.state.isBusy {
+                UpdatePill(updateManager: viewModel.updateManager)
+            }
+            DisplayLockButton()
+            SettingsCogButton(
+                updateManager: viewModel.updateManager,
+                onShowOnboarding: viewModel.onShowOnboarding ?? {}
+            )
         }
     }
 }
