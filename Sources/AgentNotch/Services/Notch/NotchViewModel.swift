@@ -84,6 +84,10 @@ final class NotchViewModel: ObservableObject {
         collapse()
     }
 
+    /// Called by `GlobalNotchEventMonitor` whenever the cursor crosses into
+    /// or out of the notch hover surface. Driven by global mouse position so
+    /// it works while the panel has `ignoresMouseEvents = true` (closed) and
+    /// SwiftUI's `.onHover` would otherwise see nothing.
     func setHover(_ hovering: Bool) {
         guard hovering != isHovering else { return }
         isHovering = hovering
@@ -121,9 +125,10 @@ final class NotchViewModel: ObservableObject {
     private func scheduleHoverClose() {
         guard isExpanded else { return }
         hoverCloseTask = Task { [weak self] in
-            // 80ms — snappy collapse so an accidentally-expanded notch can't
-            // linger covering the screen.
-            try? await Task.sleep(nanoseconds: 80_000_000)
+            // 100ms — small dwell so a quick re-entry doesn't slam the panel
+            // shut, but fast enough that an intentional flick-out collapses
+            // promptly.
+            try? await Task.sleep(nanoseconds: 100_000_000)
             guard !Task.isCancelled, let self, !self.isHovering, self.isExpanded else { return }
             await MainActor.run {
                 withAnimation(NotchMotion.morph) {

@@ -8,26 +8,28 @@ struct NotchRootView: View {
     @Namespace private var glass
 
     var body: some View {
+        let notchWidth = viewModel.isExpanded
+            ? NotchWindowController.expandedWidth
+            : NotchWindowController.closedWidth
+        let notchHeight = viewModel.isExpanded
+            ? NotchWindowController.expandedHeight
+            : NotchWindowController.closedHeight
+
+        // The outer container is *always* the expanded panel size. The
+        // AppKit panel never resizes; only the inner notch silhouette grows
+        // and shrinks via the spring. Click-through is provided at the
+        // window layer by `NotchPanel.ignoresMouseEvents`, not by sizing the
+        // panel tight to the visible shape.
         ZStack(alignment: .top) {
-            // Stage. Transparent so menu bar shows through; only the notch
-            // shape paints anything visible.
             Color.clear
 
             notch
-                .frame(
-                    width: viewModel.isExpanded
-                        ? NotchWindowController.expandedWidth
-                        : NotchWindowController.closedWidth,
-                    height: viewModel.isExpanded
-                        ? NotchWindowController.expandedHeight
-                        : NotchWindowController.closedHeight
-                )
-                .padding(.top, 0)
+                .frame(width: notchWidth, height: notchHeight)
                 .frame(maxWidth: .infinity, alignment: .top)
         }
         .frame(
-            width: NotchWindowController.canvasWidth,
-            height: NotchWindowController.canvasHeight,
+            width: NotchWindowController.expandedWidth,
+            height: NotchWindowController.expandedHeight,
             alignment: .top
         )
         .environment(\.notchNamespace, glass)
@@ -77,12 +79,10 @@ struct NotchRootView: View {
                 radius: viewModel.isExpanded ? 28 : 12,
                 x: 0,
                 y: viewModel.isExpanded ? 14 : 6)
-        .onTapGesture {
-            viewModel.toggleExpanded()
-        }
-        .onHover { hovering in
-            viewModel.setHover(hovering)
-        }
+        // Hover and click-to-toggle are driven globally by
+        // `GlobalNotchEventMonitor` so they work even when the panel has
+        // `ignoresMouseEvents = true` (closed state). SwiftUI's `.onHover`
+        // and `.onTapGesture` would otherwise see nothing in that mode.
         .animation(NotchMotion.morph, value: viewModel.isExpanded)
     }
 }
