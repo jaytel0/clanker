@@ -635,8 +635,9 @@ private struct CodexTranscriptSource {
                     latestAssistantMessage = DiscoveryHelpers.compactText(payload["message"]) ?? latestAssistantMessage
                 case "task_started":
                     activeTurn = true
-                case "task_complete":
+                case "task_complete", "turn_aborted", "turn_interrupted", "task_interrupted":
                     activeTurn = false
+                    pendingTools.removeAll()
                 default:
                     break
                 }
@@ -668,14 +669,17 @@ private struct CodexTranscriptSource {
             }
         }
 
-        let recentlyModified = Date().timeIntervalSince(modified) < 90
         let status: SessionStatusKind
         if waitingForInput {
             status = .waitingForInput
-        } else if recentlyModified, !pendingTools.isEmpty {
+        } else if activeTurn, !pendingTools.isEmpty {
             status = .runningTool
-        } else if recentlyModified, activeTurn {
-            status = .active
+        } else if activeTurn {
+            // An open Codex turn means the agent is still producing/thinking.
+            // Do not gate this on mtime: long model/tool runs can be quiet
+            // for minutes while Codex itself still says “Working”. Closed / 
+            // aborted turns clear `activeTurn` above.
+            status = .working
         } else {
             status = .completed
         }
@@ -983,7 +987,9 @@ actor CodexAppServerSource {
             return .waitingForInput
         case "running_tool", "tool", "mcp_tool":
             return .runningTool
-        case "active", "processing", "running":
+        case "processing", "running", "busy", "working":
+            return .working
+        case "active":
             return .active
         case "completed", "complete", "done":
             return .completed
