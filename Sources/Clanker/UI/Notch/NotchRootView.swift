@@ -187,6 +187,7 @@ private struct ExpandedContent: View {
 
             paneContent
         }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
     }
 
     @ViewBuilder
@@ -410,8 +411,10 @@ private struct ExpandedHeader: View {
                     )
                 }
                 SettingsCogButton(onShowOnboarding: viewModel.onShowOnboarding ?? {})
+                DisplayLockButton()
             }
         }
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     private var headlineDetail: String {
@@ -458,34 +461,211 @@ private struct HeaderPill: View {
 private struct SettingsCogButton: View {
     let onShowOnboarding: () -> Void
     @State private var hovering = false
+    @State private var isPopoverPresented = false
 
     var body: some View {
-        Menu {
+        Button {
+            isPopoverPresented.toggle()
+        } label: {
+            Image(systemName: "gearshape")
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundStyle(.white.opacity(hovering ? 0.94 : 0.68))
+                .frame(width: 28, height: 24)
+                .background {
+                    RoundedRectangle(cornerRadius: 7, style: .continuous)
+                        .fill(.white.opacity(hovering ? 0.12 : 0.06))
+                }
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .help("Clanker settings")
+        .onHover { hovering = $0 }
+        .popover(isPresented: $isPopoverPresented, arrowEdge: .top) {
+            SettingsPopover(
+                onShowOnboarding: {
+                    isPopoverPresented = false
+                    onShowOnboarding()
+                },
+                onQuit: {
+                    isPopoverPresented = false
+                    NSApp.terminate(nil)
+                }
+            )
+        }
+        .animation(NotchMotion.hover, value: hovering)
+    }
+}
+
+private struct SettingsPopover: View {
+    let onShowOnboarding: () -> Void
+    let onQuit: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("Clanker")
+                .font(.system(size: 12, weight: .semibold))
+
+            Button(action: onShowOnboarding) {
+                settingsOptionLabel(
+                    title: "Choose Sources...",
+                    systemImage: "folder.badge.gearshape",
+                    tint: .secondary
+                )
+            }
+            .buttonStyle(.plain)
+
+            Divider()
+
+            Button(action: onQuit) {
+                settingsOptionLabel(
+                    title: "Quit Clanker",
+                    systemImage: "power",
+                    tint: .red
+                )
+            }
+            .buttonStyle(.plain)
+        }
+        .padding(12)
+        .frame(width: 190, alignment: .leading)
+    }
+
+    private func settingsOptionLabel(title: String, systemImage: String, tint: Color) -> some View {
+        HStack(spacing: 8) {
+            Image(systemName: systemImage)
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundStyle(tint)
+                .frame(width: 16)
+
+            Text(title)
+                .font(.system(size: 12, weight: .medium))
+                .foregroundStyle(.primary)
+                .lineLimit(1)
+
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, 8)
+        .padding(.vertical, 6)
+        .contentShape(Rectangle())
+    }
+}
+
+// MARK: - Display lock
+
+private struct DisplayLockButton: View {
+    @ObservedObject private var settings = NotchDisplaySettings.shared
+    @State private var hovering = false
+    @State private var isPopoverPresented = false
+
+    var body: some View {
+        Button {
+            isPopoverPresented.toggle()
+        } label: {
+            Image(systemName: settings.isFollowingActiveDisplay ? "lock.open" : "lock.fill")
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundStyle(.white.opacity(hovering || !settings.isFollowingActiveDisplay ? 0.94 : 0.68))
+                .frame(width: 28, height: 24)
+                .background {
+                    RoundedRectangle(cornerRadius: 7, style: .continuous)
+                        .fill(.white.opacity(hovering || !settings.isFollowingActiveDisplay ? 0.12 : 0.06))
+                }
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .help(helpText)
+        .onHover { hovering = $0 }
+        .popover(isPresented: $isPopoverPresented, arrowEdge: .top) {
+            DisplayLockPopover(
+                settings: settings,
+                onDismiss: { isPopoverPresented = false }
+            )
+        }
+        .animation(NotchMotion.hover, value: hovering)
+        .animation(NotchMotion.hover, value: settings.isFollowingActiveDisplay)
+    }
+
+    private var helpText: String {
+        if settings.isFollowingActiveDisplay {
+            return "Following active display"
+        }
+        if let lockedDisplayName = settings.lockedDisplayName {
+            return "Locked to \(lockedDisplayName)"
+        }
+        return "Locked to display"
+    }
+}
+
+private struct DisplayLockPopover: View {
+    @ObservedObject var settings: NotchDisplaySettings
+    let onDismiss: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("Notch Display")
+                .font(.system(size: 12, weight: .semibold))
+
             Button {
-                onShowOnboarding()
+                settings.followActiveDisplay()
+                onDismiss()
             } label: {
-                Label("Choose Sources…", systemImage: "folder.badge.gearshape")
+                displayOptionLabel(
+                    title: "Follow Active Display",
+                    systemImage: "arrow.triangle.2.circlepath",
+                    isSelected: settings.isFollowingActiveDisplay
+                )
+            }
+            .buttonStyle(.plain)
+
+            if settings.currentDisplay != nil {
+                Button {
+                    settings.lockToCurrentDisplay()
+                    onDismiss()
+                } label: {
+                    displayOptionLabel(
+                        title: "Lock to Current Display",
+                        systemImage: "lock",
+                        isSelected: false
+                    )
+                }
+                .buttonStyle(.plain)
             }
 
             Divider()
 
-            Button(role: .destructive) {
-                NSApp.terminate(nil)
-            } label: {
-                Label("Quit Clanker", systemImage: "power")
+            ForEach(settings.availableDisplays) { display in
+                Button {
+                    settings.lock(to: display.id)
+                    onDismiss()
+                } label: {
+                    displayOptionLabel(
+                        title: display.name,
+                        systemImage: display.iconName,
+                        isSelected: settings.lockedDisplayID == display.id
+                    )
+                }
+                .buttonStyle(.plain)
             }
-        } label: {
-            Image(systemName: "gearshape")
-                .font(.system(size: 12, weight: .medium))
-                .foregroundStyle(.white.opacity(hovering ? 0.70 : 0.32))
-                .frame(width: 28, height: 24)
-                .contentShape(Rectangle())
         }
-        .menuStyle(.borderlessButton)
-        .menuIndicator(.hidden)
-        .fixedSize()
-        .onHover { hovering = $0 }
-        .animation(NotchMotion.hover, value: hovering)
+        .padding(12)
+        .frame(width: 220, alignment: .leading)
+    }
+
+    private func displayOptionLabel(title: String, systemImage: String, isSelected: Bool) -> some View {
+        HStack(spacing: 8) {
+            Image(systemName: isSelected ? "checkmark" : systemImage)
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundStyle(isSelected ? NotchPalette.active : .secondary)
+                .frame(width: 16)
+
+            Text(title)
+                .font(.system(size: 12, weight: .medium))
+                .foregroundStyle(.primary)
+                .lineLimit(1)
+
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, 8)
+        .padding(.vertical, 6)
+        .contentShape(Rectangle())
     }
 }
 
