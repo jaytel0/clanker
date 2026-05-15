@@ -9,7 +9,7 @@ Current state:
 - Specification complete enough to build against.
 - SwiftPM macOS scaffold exists.
 - `script/build_and_run.sh` builds and stages `dist/AgentNotch.app`.
-- The app currently launches a dynamic-notch shell with mock sessions; real harness adapters are specified but not implemented yet.
+- The app launches the dynamic-notch shell and discovers local terminal, Codex, Claude Code, and Pi sessions from live processes, Codex app-server, and local transcript/session files.
 
 Run locally:
 

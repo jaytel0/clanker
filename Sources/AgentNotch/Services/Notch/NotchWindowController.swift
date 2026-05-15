@@ -30,7 +30,7 @@ final class NotchWindowController: NSWindowController {
     static let expandedTopRadius: CGFloat = 14
     static let expandedBottomRadius: CGFloat = 26
 
-    private let screen: NSScreen
+    private(set) var screen: NSScreen
     private let viewModel: NotchViewModel
     private var cancellables = Set<AnyCancellable>()
     private var globalMouseMonitor: Any?
@@ -108,6 +108,18 @@ final class NotchWindowController: NSWindowController {
             width: canvasWidth,
             height: canvasHeight
         )
+    }
+
+    /// Reposition the panel onto the given screen. Cheap and idempotent —
+    /// safe to call from screen-change notifications without guarding.
+    func moveToScreen(_ newScreen: NSScreen) {
+        guard let panel = window else { return }
+        let frame = Self.canvasFrame(on: newScreen)
+        // No animation — jumping displays should feel instant, not draggy.
+        if newScreen !== screen || panel.frame != frame {
+            self.screen = newScreen
+            panel.setFrame(frame, display: true, animate: false)
+        }
     }
 
     /// Returns `true` only when `point` (in AppKit window-local coordinates,

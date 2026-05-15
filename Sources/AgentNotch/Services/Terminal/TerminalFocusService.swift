@@ -16,6 +16,12 @@ import Foundation
 enum TerminalFocusService {
     @discardableResult
     static func focus(_ session: AgentSession) -> Bool {
+        if let launchURL = session.launchURL,
+           let url = URL(string: launchURL),
+           NSWorkspace.shared.open(url) {
+            return true
+        }
+
         let terminal = session.terminalName.flatMap(TerminalApp.match)
         switch terminal {
         case .terminal:
@@ -32,10 +38,12 @@ enum TerminalFocusService {
             return activate(bundleID: terminal.bundleID)
 
         case .none:
+            if let bundleID = session.appBundleID, activate(bundleID: bundleID) {
+                return true
+            }
+
             // Last resort: if we have a name, try to launch/activate by it.
-            if let name = session.terminalName,
-               let url = NSWorkspace.shared.urlForApplication(toOpen: URL(fileURLWithPath: "/")) {
-                _ = url
+            if let name = session.terminalName {
                 return activate(byName: name)
             }
             return false

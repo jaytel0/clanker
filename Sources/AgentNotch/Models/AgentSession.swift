@@ -74,6 +74,11 @@ struct AgentSession: Identifiable, Equatable, Sendable {
     /// Path to the controlling tty for the shell, e.g. `/dev/ttys004`. Used by
     /// `TerminalFocusService` to find the matching window/tab.
     var tty: String?
+    /// Bundle to activate for sessions that are not backed by a terminal tab
+    /// or whose host app is easier to resolve by bundle id.
+    var appBundleID: String?
+    /// Deep link to the owning app/session when the provider exposes one.
+    var launchURL: String?
 
     var needsAttention: Bool {
         status.needsAttention
