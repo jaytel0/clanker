@@ -179,6 +179,9 @@ final class NotchViewModel: ObservableObject {
         let oldIndex = NotchPane.allCases.firstIndex(of: selectedPane)!
         let newIndex = NotchPane.allCases.firstIndex(of: pane)!
         tabDirection = newIndex > oldIndex ? .forward : .backward
+        if pane == .spend {
+            usageStore?.refreshNow()
+        }
         withAnimation(NotchMotion.tab) {
             selectedPane = pane
         }

@@ -3,6 +3,10 @@ import Foundation
 protocol HarnessUsageAdapter: Sendable {
     var harness: HarnessID { get }
     func scan(configuration: HarnessUsageScanConfiguration) -> [HarnessUsageSnapshot]
+    /// Return candidate files with their modification dates (no parsing).
+    func candidateFiles(configuration: HarnessUsageScanConfiguration) -> [(URL, Date)]
+    /// Parse a single file into snapshots.
+    func parseFile(_ file: URL, modified: Date, configuration: HarnessUsageScanConfiguration) -> [HarnessUsageSnapshot]
 }
 
 struct HarnessUsageScanConfiguration: Sendable {
@@ -25,13 +29,56 @@ enum HarnessUsageRegistry {
     ]
 }
 
+struct IncrementalScanResult: Sendable {
+    var snapshots: [HarnessUsageSnapshot]
+    var mtimes: [String: Date]
+}
+
 enum HarnessUsageScanner {
     static func scan(configuration: HarnessUsageScanConfiguration = .default) -> [HarnessUsageSnapshot] {
-        let snapshots = HarnessUsageRegistry.adapters.flatMap {
-            $0.scan(configuration: configuration)
+        incrementalScan(configuration: configuration, previousMtimes: [:]).snapshots
+    }
+
+    /// Incremental scan: only re-parses files whose mtime changed since the
+    /// previous scan. Returns updated snapshots and the new mtime map.
+    static func incrementalScan(
+        configuration: HarnessUsageScanConfiguration = .default,
+        previousMtimes: [String: Date],
+        cachedSnapshots: [HarnessUsageSnapshot] = []
+    ) -> IncrementalScanResult {
+        // Collect all candidate files with their current mtimes
+        var currentMtimes: [String: Date] = [:]
+        var filesToParse: [(URL, Date, any HarnessUsageAdapter)] = []
+        var unchangedFiles: Set<String> = []
+
+        for adapter in HarnessUsageRegistry.adapters {
+            let files = adapter.candidateFiles(configuration: configuration)
+            for (url, modified) in files {
+                let path = url.path
+                currentMtimes[path] = modified
+                if let previousMtime = previousMtimes[path],
+                   abs(previousMtime.timeIntervalSince(modified)) < 1.0 {
+                    unchangedFiles.insert(path)
+                } else {
+                    filesToParse.append((url, modified, adapter))
+                }
+            }
         }
 
-        return snapshots
+        // Parse only changed files
+        var freshSnapshots: [HarnessUsageSnapshot] = []
+        for (url, modified, adapter) in filesToParse {
+            freshSnapshots.append(contentsOf: adapter.parseFile(url, modified: modified, configuration: configuration))
+        }
+
+        // Keep cached snapshots whose source file is unchanged and still exists
+        let retainedFromCache = cachedSnapshots.filter { snapshot in
+            guard let path = snapshot.sourcePath else { return false }
+            return unchangedFiles.contains(path)
+        }
+
+        // Merge: fresh snapshots + retained cached snapshots, dedup by id
+        let merged = (freshSnapshots + retainedFromCache)
             .reduce(into: [String: HarnessUsageSnapshot]()) { partial, snapshot in
                 guard snapshot.hasSpendSignal else { return }
                 if let existing = partial[snapshot.id],
@@ -47,13 +94,18 @@ enum HarnessUsageScanner {
                 }
                 return lhs.id < rhs.id
             }
+
+        return IncrementalScanResult(
+            snapshots: merged,
+            mtimes: currentMtimes
+        )
     }
 }
 
 struct PiUsageAdapter: HarnessUsageAdapter {
     let harness: HarnessID = .pi
 
-    func scan(configuration: HarnessUsageScanConfiguration) -> [HarnessUsageSnapshot] {
+    func candidateFiles(configuration: HarnessUsageScanConfiguration) -> [(URL, Date)] {
         let root = FileManager.default.homeDirectoryForCurrentUser
             .appendingPathComponent(".pi/agent/sessions", isDirectory: true)
         return HarnessUsageFileHelpers.recentJSONLFiles(
@@ -61,7 +113,15 @@ struct PiUsageAdapter: HarnessUsageAdapter {
             maxAge: configuration.maxAge,
             limit: configuration.limitPerAdapter
         )
-        .flatMap { parse(file: $0.0, modified: $0.1, maxBytes: configuration.maxFileBytes) }
+    }
+
+    func parseFile(_ file: URL, modified: Date, configuration: HarnessUsageScanConfiguration) -> [HarnessUsageSnapshot] {
+        parse(file: file, modified: modified, maxBytes: configuration.maxFileBytes)
+    }
+
+    func scan(configuration: HarnessUsageScanConfiguration) -> [HarnessUsageSnapshot] {
+        candidateFiles(configuration: configuration)
+            .flatMap { parse(file: $0.0, modified: $0.1, maxBytes: configuration.maxFileBytes) }
     }
 
     private func parse(file: URL, modified: Date, maxBytes: Int) -> [HarnessUsageSnapshot] {
@@ -133,7 +193,7 @@ struct PiUsageAdapter: HarnessUsageAdapter {
 struct ClaudeCodeUsageAdapter: HarnessUsageAdapter {
     let harness: HarnessID = .claude
 
-    func scan(configuration: HarnessUsageScanConfiguration) -> [HarnessUsageSnapshot] {
+    func candidateFiles(configuration: HarnessUsageScanConfiguration) -> [(URL, Date)] {
         let root = FileManager.default.homeDirectoryForCurrentUser
             .appendingPathComponent(".claude/projects", isDirectory: true)
         return HarnessUsageFileHelpers.recentJSONLFiles(
@@ -141,7 +201,15 @@ struct ClaudeCodeUsageAdapter: HarnessUsageAdapter {
             maxAge: configuration.maxAge,
             limit: configuration.limitPerAdapter
         )
-        .flatMap { parse(file: $0.0, modified: $0.1, maxBytes: configuration.maxFileBytes) }
+    }
+
+    func parseFile(_ file: URL, modified: Date, configuration: HarnessUsageScanConfiguration) -> [HarnessUsageSnapshot] {
+        parse(file: file, modified: modified, maxBytes: configuration.maxFileBytes)
+    }
+
+    func scan(configuration: HarnessUsageScanConfiguration) -> [HarnessUsageSnapshot] {
+        candidateFiles(configuration: configuration)
+            .flatMap { parse(file: $0.0, modified: $0.1, maxBytes: configuration.maxFileBytes) }
     }
 
     private func parse(file: URL, modified: Date, maxBytes: Int) -> [HarnessUsageSnapshot] {
@@ -210,7 +278,7 @@ struct ClaudeCodeUsageAdapter: HarnessUsageAdapter {
 struct CodexUsageAdapter: HarnessUsageAdapter {
     let harness: HarnessID = .codex
 
-    func scan(configuration: HarnessUsageScanConfiguration) -> [HarnessUsageSnapshot] {
+    func candidateFiles(configuration: HarnessUsageScanConfiguration) -> [(URL, Date)] {
         let root = FileManager.default.homeDirectoryForCurrentUser
             .appendingPathComponent(".codex/sessions", isDirectory: true)
         return HarnessUsageFileHelpers.recentJSONLFiles(
@@ -219,7 +287,15 @@ struct CodexUsageAdapter: HarnessUsageAdapter {
             limit: configuration.limitPerAdapter
         )
         .filter { $0.0.lastPathComponent.hasPrefix("rollout-") }
-        .flatMap { parse(file: $0.0, modified: $0.1, maxBytes: configuration.maxFileBytes) }
+    }
+
+    func parseFile(_ file: URL, modified: Date, configuration: HarnessUsageScanConfiguration) -> [HarnessUsageSnapshot] {
+        parse(file: file, modified: modified, maxBytes: configuration.maxFileBytes)
+    }
+
+    func scan(configuration: HarnessUsageScanConfiguration) -> [HarnessUsageSnapshot] {
+        candidateFiles(configuration: configuration)
+            .flatMap { parse(file: $0.0, modified: $0.1, maxBytes: configuration.maxFileBytes) }
     }
 
     private func parse(file: URL, modified: Date, maxBytes: Int) -> [HarnessUsageSnapshot] {
