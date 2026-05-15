@@ -12,7 +12,6 @@ final class RecentsSettings: ObservableObject {
 
     private enum Key {
         static let roots = "recents.roots"
-        static let maxVisible = "recents.maxVisible"
         static let cdHookEnabled = "recents.cdHookEnabled"
     }
 
@@ -20,12 +19,6 @@ final class RecentsSettings: ObservableObject {
     /// is treated as a repo; the basename of the root becomes its category.
     @Published var roots: [String] {
         didSet { defaults.set(roots, forKey: Key.roots) }
-    }
-
-    /// Cap on rows shown in the notch. Scanning is unbounded; this is a
-    /// display knob.
-    @Published var maxVisible: Int {
-        didSet { defaults.set(maxVisible, forKey: Key.maxVisible) }
     }
 
     /// Mirror of "is the chpwd hook installed in `.zshrc`". Persisted purely
@@ -45,9 +38,6 @@ final class RecentsSettings: ObservableObject {
             (NSHomeDirectory() as NSString).appendingPathComponent("Developer/shopify")
         ]
         self.roots = (defaults.array(forKey: Key.roots) as? [String]) ?? defaultRoots
-
-        let storedMax = defaults.integer(forKey: Key.maxVisible)
-        self.maxVisible = storedMax > 0 ? storedMax : 6
 
         self.cdHookEnabled = defaults.bool(forKey: Key.cdHookEnabled)
     }

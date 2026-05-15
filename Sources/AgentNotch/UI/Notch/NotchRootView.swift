@@ -175,25 +175,60 @@ private struct ExpandedContent: View {
     private static let edgeInset: CGFloat = 22
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
+        VStack(alignment: .leading, spacing: 8) {
             ExpandedHeader(viewModel: viewModel, namespace: namespace)
                 .padding(.horizontal, Self.edgeInset)
 
-            Divider()
-                .background(.white.opacity(0.08))
-                .padding(.horizontal, Self.edgeInset)
+            PaneTabBar(
+                selected: viewModel.selectedPane,
+                sessionsCount: viewModel.sessions.count,
+                recentsCount: viewModel.recents.count,
+                attentionCount: viewModel.attentionCount,
+                onSelect: { viewModel.selectPane($0) }
+            )
+            .padding(.horizontal, Self.edgeInset)
 
-            sessionList
+            paneContent
         }
     }
 
-    private var sessionList: some View {
+    @ViewBuilder
+    private var paneContent: some View {
+        // Both panes use the same tiny horizontal offset (4pt) plus an
+        // opacity fade. SwiftUI applies the active animation
+        // (`NotchMotion.tab` — system `.snappy`) to both insertion and
+        // removal symmetrically, so the swap reads as a single quick slide
+        // rather than a fade-and-then-slide. 4pt is barely visible but
+        // gives the eye a direction cue.
+        switch viewModel.selectedPane {
+        case .sessions:
+            sessionsPane
+                .transition(
+                    .opacity
+                        .combined(with: .move(edge: .leading))
+                        .animation(NotchMotion.tab)
+                )
+        case .recents:
+            recentsPane
+                .transition(
+                    .opacity
+                        .combined(with: .move(edge: .trailing))
+                        .animation(NotchMotion.tab)
+                )
+        }
+    }
+
+    private var sessionsPane: some View {
         ScrollView(.vertical, showsIndicators: false) {
             VStack(alignment: .leading, spacing: 14) {
                 if viewModel.sessions.isEmpty {
-                    EmptyState()
-                        .frame(maxWidth: .infinity)
-                        .padding(.top, 40)
+                    EmptyState(
+                        icon: "moon.zzz.fill",
+                        title: "All quiet",
+                        subtitle: "No agent sessions are running."
+                    )
+                    .frame(maxWidth: .infinity)
+                    .padding(.top, 40)
                 } else {
                     ForEach(viewModel.groupedSessions) { group in
                         SessionGroupView(
@@ -204,13 +239,134 @@ private struct ExpandedContent: View {
                     }
                 }
             }
-            // Bottom inset so the last row clears the notch shape's curved
-            // shoulders instead of slamming into them.
             .padding(.bottom, 18)
             .animation(NotchMotion.row, value: viewModel.sessions.map(\.id))
         }
         .scrollContentBackground(.hidden)
         .frame(maxHeight: .infinity)
+    }
+
+    private var recentsPane: some View {
+        ScrollView(.vertical, showsIndicators: false) {
+            VStack(alignment: .leading, spacing: 4) {
+                if viewModel.recents.isEmpty {
+                    EmptyState(
+                        icon: "folder.badge.questionmark",
+                        title: "No recent projects",
+                        subtitle: "Add roots in Settings → Recents."
+                    )
+                    .frame(maxWidth: .infinity)
+                    .padding(.top, 40)
+                } else {
+                    ForEach(viewModel.recents) { project in
+                        RecentProjectRow(
+                            project: project,
+                            onPrimary: { viewModel.activate(project, action: .ghostty) },
+                            onFinder: { viewModel.activate(project, action: .finder) },
+                            onGithub: { viewModel.activate(project, action: .github) }
+                        )
+                        .padding(.horizontal, Self.edgeInset)
+                        .transition(.opacity.combined(with: .offset(y: 4)))
+                    }
+                }
+            }
+            .padding(.bottom, 18)
+            .animation(NotchMotion.row, value: viewModel.recents.map(\.id))
+        }
+        .scrollContentBackground(.hidden)
+        .frame(maxHeight: .infinity)
+    }
+}
+
+// MARK: - Pane tabs
+
+private struct PaneTabBar: View {
+    let selected: NotchPane
+    let sessionsCount: Int
+    let recentsCount: Int
+    let attentionCount: Int
+    let onSelect: (NotchPane) -> Void
+
+    var body: some View {
+        HStack(spacing: 4) {
+            tab(
+                .sessions,
+                count: sessionsCount,
+                accentCount: attentionCount,
+                accentColor: NotchPalette.attention
+            )
+            tab(
+                .recents,
+                count: recentsCount
+            )
+            Spacer(minLength: 0)
+        }
+    }
+
+    @ViewBuilder
+    private func tab(
+        _ pane: NotchPane,
+        count: Int,
+        accentCount: Int = 0,
+        accentColor: Color = NotchPalette.active
+    ) -> some View {
+        let isSelected = pane == selected
+        Button {
+            onSelect(pane)
+        } label: {
+            HStack(spacing: 6) {
+                Text(pane.title)
+                    .font(.system(size: 11.5, weight: .semibold))
+                    .tracking(-0.1)
+                    .foregroundStyle(isSelected ? .white : .white.opacity(0.5))
+
+                if accentCount > 0 {
+                    TabBadge(value: accentCount, tint: accentColor, prominent: true)
+                } else if count > 0 {
+                    TabBadge(
+                        value: count,
+                        tint: .white,
+                        prominent: false,
+                        emphasized: isSelected
+                    )
+                }
+            }
+            .padding(.horizontal, 10)
+            .padding(.vertical, 5)
+            .background {
+                Capsule(style: .continuous)
+                    .fill(.white.opacity(isSelected ? 0.10 : 0.0))
+                    .overlay(
+                        Capsule(style: .continuous)
+                            .stroke(.white.opacity(isSelected ? 0.10 : 0.0), lineWidth: 0.5)
+                    )
+            }
+            .contentShape(Capsule(style: .continuous))
+        }
+        .buttonStyle(.plain)
+        .animation(NotchMotion.hover, value: isSelected)
+    }
+}
+
+private struct TabBadge: View {
+    let value: Int
+    let tint: Color
+    var prominent: Bool = false
+    var emphasized: Bool = false
+
+    var body: some View {
+        Text("\(value)")
+            .font(.system(size: 9.5, weight: .bold, design: .rounded))
+            .monospacedDigit()
+            .foregroundStyle(prominent ? .black.opacity(0.78) : .white.opacity(emphasized ? 0.92 : 0.55))
+            .padding(.horizontal, 5)
+            .padding(.vertical, 1)
+            .background {
+                Capsule(style: .continuous)
+                    .fill(prominent
+                          ? tint
+                          : tint.opacity(emphasized ? 0.18 : 0.10))
+            }
     }
 }
 
@@ -297,6 +453,8 @@ private struct HeaderPill: View {
 
 // MARK: - Group + rows
 
+// MARK: - Recents section
+
 private struct SessionGroupView: View {
     let group: SessionGroup
     let edgeInset: CGFloat
@@ -304,18 +462,8 @@ private struct SessionGroupView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
-            HStack(spacing: 6) {
-                Text(group.title)
-                    .font(.system(size: 10.5, weight: .semibold))
-                    .foregroundStyle(.white.opacity(0.46))
-                    .textCase(.uppercase)
-                    .tracking(0.6)
-
-                Rectangle()
-                    .fill(.white.opacity(0.06))
-                    .frame(height: 0.5)
-            }
-            .padding(.horizontal, edgeInset)
+            SessionGroupHeader(group: group)
+                .padding(.horizontal, edgeInset)
 
             VStack(spacing: 4) {
                 ForEach(group.sessions) { session in
@@ -325,6 +473,103 @@ private struct SessionGroupView: View {
                 }
             }
         }
+    }
+}
+
+/// Project header for a `SessionGroup`.
+///
+/// Treats the project as what it actually is — a filesystem path — rather
+/// than dressing it up as a marketing-ish all-caps label. Renders as a
+/// monospace breadcrumb ("personal/farm", with the parent dim and the
+/// project bright) so the same visual language as Finder / Terminal /
+/// Xcode comes through. A small count chip appears only when the project
+/// has 2+ sessions, since the rows beneath already convey count visually
+/// at 1.
+private struct SessionGroupHeader: View {
+    let group: SessionGroup
+
+    @State private var hovering = false
+
+    var body: some View {
+        Button(action: openInFinder) {
+            HStack(spacing: 8) {
+                (
+                    Text(parent.isEmpty ? "" : parent + "/")
+                        .foregroundStyle(.white.opacity(hovering ? 0.45 : 0.32))
+                    + Text(group.title)
+                        .foregroundStyle(.white.opacity(hovering ? 0.98 : 0.85))
+                        .fontWeight(.semibold)
+                )
+                .font(.system(size: 11.5, design: .monospaced))
+                .lineLimit(1)
+                .truncationMode(.middle)
+
+                if group.sessions.count > 1 {
+                    Text("\(group.sessions.count)")
+                        .font(.system(size: 9.5, weight: .semibold, design: .rounded))
+                        .monospacedDigit()
+                        .foregroundStyle(.white.opacity(0.55))
+                        .padding(.horizontal, 5)
+                        .padding(.vertical, 1)
+                        .background(
+                            Capsule(style: .continuous)
+                                .fill(.white.opacity(0.08))
+                        )
+                }
+
+                // Reveal-in-Finder affordance: appears on hover so the
+                // header reads cleanly at rest, then declares itself as
+                // clickable the moment the cursor lands.
+                Image(systemName: "arrow.up.forward.app")
+                    .font(.system(size: 9, weight: .semibold))
+                    .foregroundStyle(.white.opacity(hovering ? 0.55 : 0))
+
+                Spacer(minLength: 0)
+            }
+            .contentShape(Rectangle())
+            .padding(.vertical, 2)
+        }
+        .buttonStyle(.plain)
+        .onHover { isHovering in
+            hovering = isHovering
+            // `.pointerStyle(.link)` only exists on macOS 15+; fall back to
+            // the AppKit cursor stack so the deployment target stays at 14.
+            if isHovering { NSCursor.pointingHand.push() } else { NSCursor.pop() }
+        }
+        .help("Reveal \(displayPath) in Finder")
+        .animation(NotchMotion.hover, value: hovering)
+    }
+
+    /// Open the project root in Finder. We use the *first* session's cwd
+    /// rather than walking up to the repo root — if the user `cd`’d into a
+    /// subdir, that subdir is what they're working in, and revealing the
+    /// repo root would feel like a level-up they didn't ask for.
+    private func openInFinder() {
+        guard let path = expandedCWD else { return }
+        NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: path)])
+    }
+
+    /// Parent directory of the project's first session cwd, e.g. for
+    /// `~/Developer/personal/farm` returns `personal`. Empty string when we
+    /// can't determine one (no sessions, weird path) — in that case the
+    /// header just shows the project name with no breadcrumb prefix.
+    private var parent: String {
+        guard let path = expandedCWD else { return "" }
+        let url = URL(fileURLWithPath: path)
+        let parentName = url.deletingLastPathComponent().lastPathComponent
+        // Skip degenerate parents like "/" or "\" so we don't render "//farm".
+        guard !parentName.isEmpty, parentName != "/" else { return "" }
+        return parentName
+    }
+
+    private var expandedCWD: String? {
+        guard let cwd = group.sessions.first?.cwd, !cwd.isEmpty else { return nil }
+        return (cwd as NSString).expandingTildeInPath
+    }
+
+    private var displayPath: String {
+        guard let path = expandedCWD else { return group.title }
+        return path.replacingOccurrences(of: NSHomeDirectory(), with: "~")
     }
 }
 
@@ -378,7 +623,7 @@ private struct SessionRow: View {
             Spacer(minLength: 8)
 
             VStack(alignment: .trailing, spacing: 4) {
-                StatusPill(status: session.status)
+                StatusPill(status: session.status, lastActivity: session.lastActivity)
                 Text(relativeTime(session.lastActivity))
                     .font(.system(size: 10, weight: .medium, design: .rounded))
                     .monospacedDigit()
@@ -470,75 +715,122 @@ private struct SessionRowButtonStyle: ButtonStyle {
 
 private struct StatusPill: View {
     let status: SessionStatusKind
+    /// Last time the underlying session produced output. Used to derive
+    /// "Working\u{2026}" from `.active` / `.idle` rows when transcript bytes
+    /// have been flowing recently. Pass `nil` to disable promotion.
+    var lastActivity: Date? = nil
+
+    /// Window during which a `.active` / `.idle` row should be shown as
+    /// "Working\u{2026}" after the most recent transcript write. Tuned so
+    /// short bursts of activity register but the pill returns to Idle
+    /// promptly once the agent stops talking.
+    private static let workingWindow: TimeInterval = 4
 
     var body: some View {
-        HStack(spacing: 5) {
-            indicator
-            Text(status.title)
+        // TimelineView gives the pill its own 1Hz clock so promotion to
+        // Working and the auto-decay back to Idle happen continuously,
+        // not just when the discovery loop fires (every few seconds).
+        TimelineView(.periodic(from: .now, by: 1)) { context in
+            renderedPill(now: context.date)
+        }
+    }
+
+    private func renderedPill(now: Date) -> some View {
+        let effective = effectiveStatus(now: now)
+        return HStack(spacing: 5) {
+            indicator(for: effective)
+            Text(effective.title)
                 .font(.system(size: 10, weight: .semibold, design: .rounded))
-                .foregroundStyle(textColor)
+                .foregroundStyle(textColor(for: effective))
         }
         .padding(.horizontal, 7)
         .padding(.vertical, 3)
         .background {
+            let t = tint(for: effective)
             Capsule(style: .continuous)
-                .fill(tint.opacity(backgroundOpacity))
+                .fill(t.opacity(backgroundOpacity(for: effective)))
                 .overlay(
                     Capsule(style: .continuous)
-                        .stroke(tint.opacity(borderOpacity), lineWidth: 0.5)
+                        .stroke(t.opacity(borderOpacity(for: effective)), lineWidth: 0.5)
                 )
+        }
+        .animation(.easeInOut(duration: 0.18), value: effective)
+    }
+
+    /// What the pill actually displays. Source-of-truth statuses set by
+    /// transcript parsers (.thinking, .runningTool) always count as Working.
+    /// Ambient ".active" / ".idle" rows are promoted to Working only when
+    /// there's been transcript activity inside `workingWindow`.
+    private func effectiveStatus(now: Date) -> SessionStatusKind {
+        switch status {
+        case .working, .thinking, .runningTool:
+            return .working
+        case .active, .idle:
+            if let lastActivity,
+               now.timeIntervalSince(lastActivity) < Self.workingWindow {
+                return .working
+            }
+            return .idle
+        default:
+            return status
         }
     }
 
     @ViewBuilder
-    private var indicator: some View {
+    private func indicator(for status: SessionStatusKind) -> some View {
         switch status {
-        case .active, .thinking, .runningTool:
-            PulsingDot(color: tint, diameter: 5)
+        case .working, .thinking, .runningTool:
+            PulsingDot(color: tint(for: status), diameter: 5)
         case .waitingForApproval, .waitingForInput:
-            PulsingDot(color: tint, diameter: 5, intensity: 1.2)
+            PulsingDot(color: tint(for: status), diameter: 5, intensity: 1.2)
         case .error:
             Image(systemName: "exclamationmark")
                 .font(.system(size: 7, weight: .black))
                 .foregroundStyle(.black.opacity(0.65))
                 .frame(width: 8, height: 8)
-                .background(Circle().fill(tint))
+                .background(Circle().fill(tint(for: status)))
         case .completed:
             Image(systemName: "checkmark")
                 .font(.system(size: 7, weight: .black))
                 .foregroundStyle(.black.opacity(0.65))
                 .frame(width: 8, height: 8)
-                .background(Circle().fill(tint))
-        case .idle:
+                .background(Circle().fill(tint(for: status)))
+        case .active, .idle:
             Circle()
-                .fill(tint)
+                .fill(tint(for: status))
                 .frame(width: 5, height: 5)
         }
     }
 
-    private var tint: Color {
+    private func tint(for status: SessionStatusKind) -> Color {
         switch status {
         case .waitingForApproval, .waitingForInput: NotchPalette.attention
-        case .active, .thinking, .runningTool: NotchPalette.active
+        case .working, .thinking, .runningTool: NotchPalette.working
         case .completed: NotchPalette.completed
-        case .idle: NotchPalette.idle
+        case .active, .idle: NotchPalette.idle
         case .error: NotchPalette.error
         }
     }
 
-    private var textColor: Color {
+    private func textColor(for status: SessionStatusKind) -> Color {
         switch status {
-        case .idle: .white.opacity(0.55)
+        case .active, .idle: .white.opacity(0.55)
         default: .white.opacity(0.92)
         }
     }
 
-    private var backgroundOpacity: Double {
-        status == .idle ? 0.10 : 0.18
+    private func backgroundOpacity(for status: SessionStatusKind) -> Double {
+        switch status {
+        case .active, .idle: 0.10
+        default: 0.18
+        }
     }
 
-    private var borderOpacity: Double {
-        status == .idle ? 0.10 : 0.32
+    private func borderOpacity(for status: SessionStatusKind) -> Double {
+        switch status {
+        case .active, .idle: 0.10
+        default: 0.32
+        }
     }
 }
 
@@ -622,9 +914,15 @@ private struct HarnessIcon: View {
                         )
 
                     if harness == .pi {
-                        Text("π")
-                            .font(.system(size: size * 0.66, weight: .bold, design: .rounded))
-                            .foregroundStyle(.white.opacity(0.95))
+                        // Official Pi wordmark glyph (vector, exact path
+                        // ported from Pi's published SVG). Renders sharp at
+                        // every harness icon size and keeps the brand
+                        // identity clean instead of relying on the system
+                        // π codepoint, which renders inconsistently across
+                        // SF Pro / SF Rounded weights.
+                        PiLogoShape()
+                            .fill(Color.white.opacity(0.95), style: FillStyle(eoFill: true))
+                            .frame(width: size * 0.66, height: size * 0.66)
                     } else {
                         Image(systemName: harness.symbolName)
                             .font(.system(size: size * 0.5, weight: .semibold))
@@ -672,16 +970,23 @@ private struct HarnessIcon: View {
 
 // MARK: - Empty state
 
+/// Generic empty-state copy for any pane. Both panes share the same visual
+/// recipe (icon + title + subtitle) so the surface stays consistent when the
+/// user flips between tabs.
 private struct EmptyState: View {
+    let icon: String
+    let title: String
+    let subtitle: String
+
     var body: some View {
         VStack(spacing: 8) {
-            Image(systemName: "moon.zzz.fill")
+            Image(systemName: icon)
                 .font(.system(size: 24, weight: .semibold))
                 .foregroundStyle(.white.opacity(0.32))
-            Text("All quiet")
+            Text(title)
                 .font(.system(size: 13, weight: .semibold))
                 .foregroundStyle(.white.opacity(0.7))
-            Text("No agent sessions are running.")
+            Text(subtitle)
                 .font(.system(size: 11, weight: .medium))
                 .foregroundStyle(.white.opacity(0.42))
         }
@@ -692,7 +997,14 @@ private struct EmptyState: View {
 
 enum NotchPalette {
     static let attention = Color(red: 1.00, green: 0.78, blue: 0.30)
+    /// Reserved for the legacy `.active` color slot — unused now that
+    /// `.active` displays as Idle. Kept for any callers that still reference
+    /// it (currently the closed-bar accent ring).
     static let active = Color(red: 0.36, green: 0.85, blue: 0.45)
+    /// Vivid system green for actively-producing agents ("Working\u{2026}").
+    /// Mirrors the SF system green so it reads as the same "live activity"
+    /// color used by macOS itself.
+    static let working = Color(red: 0.30, green: 0.85, blue: 0.39)
     static let completed = Color(red: 0.45, green: 0.78, blue: 0.95)
     static let idle = Color.white.opacity(0.5)
     static let error = Color(red: 0.98, green: 0.42, blue: 0.42)

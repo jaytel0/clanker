@@ -3,29 +3,75 @@ import Combine
 import Foundation
 import SwiftUI
 
+/// Top-level pane shown inside the expanded notch. Each pane is a focused
+/// list with its own scroll state — keeps the surface scannable when there
+/// are many sessions, instead of burying recents at the bottom of one
+/// combined scroll.
+enum NotchPane: String, CaseIterable, Identifiable, Sendable {
+    case sessions
+    case recents
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .sessions: "Sessions"
+        case .recents: "Recents"
+        }
+    }
+}
+
 @MainActor
 final class NotchViewModel: ObservableObject {
     @Published var isExpanded = false
     @Published var isHovering = false
+    @Published var selectedPane: NotchPane = .sessions
     @Published private(set) var sessions: [AgentSession] = []
+    @Published private(set) var recents: [RecentProject] = []
 
+    private let recentsStore: RecentProjectsStore?
     private var cancellables = Set<AnyCancellable>()
     private var hoverOpenTask: Task<Void, Never>?
     private var hoverCloseTask: Task<Void, Never>?
 
-    init(sessionStore: LocalSessionStore) {
+    init(
+        sessionStore: LocalSessionStore,
+        recentsStore: RecentProjectsStore? = nil
+    ) {
+        self.recentsStore = recentsStore
+
         sessionStore.$sessions
             .removeDuplicates()
             .sink { [weak self] sessions in
-                self?.sessions = sessions.sortedForNotch()
+                // Only surface sessions backed by a currently running
+                // process / app / live terminal AND not finished. Transcript
+                // history and completed runs are useful internal context for
+                // the merger but they must not appear in the UI — ground
+                // truth is "is this thing actually running right now?"
+                // (matches what `w` shows for live TTYs).
+                self?.sessions = sessions
+                    .filter { $0.isLive && $0.status != .completed }
+                    .sortedForNotch()
+            }
+            .store(in: &cancellables)
+
+        recentsStore?.$recents
+            .removeDuplicates()
+            .sink { [weak self] recents in
+                self?.recents = recents
             }
             .store(in: &cancellables)
     }
 
     // MARK: - Derived
 
+    /// `sessions` is already pre-filtered to `isLive` rows in the sink, so
+    /// every session in scope is a real running thing.
+    /// "Active" in the closed-bar badge means "actually doing work right
+    /// now", not "exists". `.active` and `.idle` are ambient "session is
+    /// open" states and shouldn't inflate this count.
     var activeCount: Int {
-        sessions.filter { $0.status != .idle && $0.status != .completed }.count
+        sessions.filter { $0.status != .idle && $0.status != .active && $0.status != .completed }.count
     }
 
     var attentionCount: Int {
@@ -65,8 +111,25 @@ final class NotchViewModel: ObservableObject {
 
     func toggleExpanded() {
         cancelHoverTasks()
+        if !isExpanded {
+            // Refresh recents right as the user opens the notch so the list
+            // is current at the moment they look at it. Cheap — a few stat
+            // calls per repo.
+            recentsStore?.refreshOnDemand()
+        }
         withAnimation(NotchMotion.morph) {
             isExpanded.toggle()
+        }
+    }
+
+    /// Switch to a different pane inside the expanded notch. Uses the
+    /// system `.snappy` spring (macOS 14+) so the transition matches the
+    /// timing curve AppKit uses for native tab/segment swaps — quick,
+    /// minimal overshoot, no perceptible settle.
+    func selectPane(_ pane: NotchPane) {
+        guard pane != selectedPane else { return }
+        withAnimation(NotchMotion.tab) {
+            selectedPane = pane
         }
     }
 
@@ -81,6 +144,14 @@ final class NotchViewModel: ObservableObject {
     /// Activates the terminal that owns the session and dismisses the notch.
     func activate(_ session: AgentSession) {
         TerminalFocusService.focus(session)
+        collapse()
+    }
+
+    /// Performs an action on a recent project (open in Ghostty / Finder /
+    /// GitHub) and dismisses the notch so the user lands directly in the
+    /// destination surface.
+    func activate(_ project: RecentProject, action: RecentProjectAction) {
+        RecentProjectActions.perform(action, project: project)
         collapse()
     }
 
@@ -115,6 +186,7 @@ final class NotchViewModel: ObservableObject {
             try? await Task.sleep(nanoseconds: 150_000_000)
             guard !Task.isCancelled, let self, self.isHovering, !self.isExpanded else { return }
             await MainActor.run {
+                self.recentsStore?.refreshOnDemand()
                 withAnimation(NotchMotion.morph) {
                     self.isExpanded = true
                 }
@@ -158,8 +230,8 @@ extension Array where Element == AgentSession {
             if lhs.needsAttention != rhs.needsAttention {
                 return lhs.needsAttention
             }
-            let lhsActive = lhs.status == .active || lhs.status == .thinking || lhs.status == .runningTool
-            let rhsActive = rhs.status == .active || rhs.status == .thinking || rhs.status == .runningTool
+            let lhsActive = lhs.status == .working || lhs.status == .thinking || lhs.status == .runningTool
+            let rhsActive = rhs.status == .working || rhs.status == .thinking || rhs.status == .runningTool
             if lhsActive != rhsActive {
                 return lhsActive
             }
@@ -182,4 +254,10 @@ enum NotchMotion {
 
     /// Hover micro-scale; very fast.
     static let hover: Animation = .spring(response: 0.32, dampingFraction: 0.78, blendDuration: 0)
+
+    /// Pane-to-pane swap inside the expanded notch. Apple's pre-tuned
+    /// snappy spring — the same one SwiftUI uses for system segmented
+    /// controls and `NavigationSplitView` column toggles. Quick (220ms),
+    /// barely any overshoot, settles instantly.
+    static let tab: Animation = .snappy(duration: 0.22, extraBounce: 0)
 }

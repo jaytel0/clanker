@@ -15,19 +15,27 @@ struct AgentNotchApp: App {
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
     private let sessionStore = LocalSessionStore()
+    private lazy var recentsStore = RecentProjectsStore(sessionStore: sessionStore)
     private var notchController: NotchWindowController?
     private var screenObservers: [NSObjectProtocol] = []
     private var screenPollTimer: Timer?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        if CommandLine.arguments.contains("--print-sessions") {
+            printSessionsAndTerminate()
+            return
+        }
+
         NSApp.setActivationPolicy(.accessory)
         sessionStore.start()
+        recentsStore.start()
         showNotch()
         installScreenObservers()
     }
 
     func applicationWillTerminate(_ notification: Notification) {
         sessionStore.stop()
+        recentsStore.stop()
         screenPollTimer?.invalidate()
         for observer in screenObservers {
             NotificationCenter.default.removeObserver(observer)
@@ -37,7 +45,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func showNotch() {
         guard notchController == nil, let screen = NSScreen.main else { return }
-        let viewModel = NotchViewModel(sessionStore: sessionStore)
+        let viewModel = NotchViewModel(
+            sessionStore: sessionStore,
+            recentsStore: recentsStore
+        )
         let controller = NotchWindowController(screen: screen, viewModel: viewModel)
         controller.showWindow(nil)
         notchController = controller
@@ -104,5 +115,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func followActiveScreen() {
         guard let controller = notchController, let screen = NSScreen.main else { return }
         controller.moveToScreen(screen)
+    }
+
+    private func printSessionsAndTerminate() {
+        Task.detached(priority: .utility) {
+            let sessions = await LocalSessionScanner.scan()
+            await MainActor.run {
+                for session in sessions {
+                    print([
+                        session.harness.rawValue,
+                        session.status.rawValue,
+                        session.title,
+                        "pid=\(session.pid.map(String.init) ?? "-")",
+                        "tty=\(session.tty ?? "-")",
+                        "live=\(session.isLive)",
+                        "cwd=\(session.cwd)"
+                    ].joined(separator: " | "))
+                }
+                NSApp.terminate(nil)
+            }
+        }
     }
 }

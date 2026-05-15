@@ -3,10 +3,10 @@ import Foundation
 
 /// Owns the live list of recent projects shown in the notch.
 ///
-/// Three inputs: filesystem scans (timer + manual), the active sessions list
-/// (so we can flag and float repos with running agents), and the user's
-/// settings (roots / max visible). Outputs one `@Published` `recents` array
-/// already sorted and capped for direct display.
+/// Two inputs: filesystem scans (timer + manual) and the active sessions
+/// list (so we can flag and float repos with running agents). Outputs one
+/// `@Published` `recents` array already sorted by recency for direct
+/// display — no cap, the notch is scrollable.
 @MainActor
 final class RecentProjectsStore: ObservableObject {
     @Published private(set) var recents: [RecentProject] = []
@@ -24,13 +24,6 @@ final class RecentProjectsStore: ObservableObject {
         // Re-derive whenever inputs change. The actual filesystem scan runs
         // on its own timer; everything else is cheap reshape work.
         sessionStore.$sessions
-            .removeDuplicates()
-            .sink { [weak self] _ in
-                self?.refreshDerived()
-            }
-            .store(in: &cancellables)
-
-        settings.$maxVisible
             .removeDuplicates()
             .sink { [weak self] _ in
                 self?.refreshDerived()
@@ -110,9 +103,8 @@ final class RecentProjectsStore: ObservableObject {
         }
 
         let sorted = merged.sorted { $0.score > $1.score }
-        let capped = Array(sorted.prefix(max(1, settings.maxVisible)))
-        if capped != recents {
-            recents = capped
+        if sorted != recents {
+            recents = sorted
         }
     }
 
@@ -120,7 +112,7 @@ final class RecentProjectsStore: ObservableObject {
     /// `hasPrefix` against per repo.
     private func activeSessionPaths(from sessions: [AgentSession]) -> [String] {
         sessions
-            .filter { $0.status != .idle && $0.status != .completed }
+            .filter(\.countsAsLiveActive)
             .map { expandHome($0.cwd) }
     }
 

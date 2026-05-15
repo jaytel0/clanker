@@ -19,12 +19,24 @@ pkill -x "$APP_NAME" >/dev/null 2>&1 || true
 pkill -f "codex app-server --listen ws://127.0.0.1:41241" >/dev/null 2>&1 || true
 
 swift build --package-path "$ROOT_DIR"
-BUILD_BINARY="$(swift build --package-path "$ROOT_DIR" --show-bin-path)/$APP_NAME"
+BUILD_BIN_DIR="$(swift build --package-path "$ROOT_DIR" --show-bin-path)"
+BUILD_BINARY="$BUILD_BIN_DIR/$APP_NAME"
 
 rm -rf "$APP_BUNDLE"
 mkdir -p "$APP_MACOS"
 cp "$BUILD_BINARY" "$APP_BINARY"
 chmod +x "$APP_BINARY"
+
+# Copy any SPM-generated resource bundles next to the binary into the
+# app's Resources/ directory. Without this step, `Bundle.module` works in
+# `swift run` (which leaves resources alongside the binary) but fails in
+# the packaged .app, breaking icon/asset loading.
+mkdir -p "$APP_CONTENTS/Resources"
+shopt -s nullglob
+for bundle in "$BUILD_BIN_DIR"/*.bundle; do
+  cp -R "$bundle" "$APP_CONTENTS/Resources/"
+done
+shopt -u nullglob
 
 cat >"$INFO_PLIST" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>

@@ -61,16 +61,23 @@ struct RecentProjectRow: View {
     private var actionCluster: some View {
         HStack(spacing: 4) {
             RecentActionIconButton(
-                systemName: "folder",
                 tooltip: "Reveal in Finder",
                 action: onFinder
-            )
+            ) {
+                Image(systemName: "folder")
+                    .font(.system(size: 10.5, weight: .semibold))
+            }
             RecentActionIconButton(
-                systemName: "chevron.left.forwardslash.chevron.right",
                 tooltip: project.githubURL == nil ? "No GitHub remote" : "Open on GitHub",
                 disabled: project.githubURL == nil,
                 action: onGithub
-            )
+            ) {
+                // Official GitHub Invertocat mark, sized slightly larger
+                // than the SF Symbol next to it because the Octicon has a
+                // tighter optical bounding box than `folder`.
+                GithubMarkView()
+                    .frame(width: 18, height: 18)
+            }
         }
         .opacity(hovering ? 1.0 : 0.55)
         .animation(NotchMotion.hover, value: hovering)
@@ -137,18 +144,21 @@ private struct CategoryChip: View {
     }
 }
 
-private struct RecentActionIconButton: View {
-    let systemName: String
+/// Generic 22pt action button used in the Recents row's right-side
+/// cluster. Takes any icon view so we can mix SF Symbols (Finder) with the
+/// bundled GitHub mark, while keeping the chrome (frame, hover background,
+/// hover stroke, disabled fade) in one place.
+private struct RecentActionIconButton<Icon: View>: View {
     let tooltip: String
     var disabled: Bool = false
     let action: () -> Void
+    @ViewBuilder let icon: () -> Icon
 
     @State private var hovering = false
 
     var body: some View {
         Button(action: action) {
-            Image(systemName: systemName)
-                .font(.system(size: 10.5, weight: .semibold))
+            icon()
                 .foregroundStyle(.white.opacity(disabled ? 0.25 : (hovering ? 0.95 : 0.7)))
                 .frame(width: 22, height: 22)
                 .background(

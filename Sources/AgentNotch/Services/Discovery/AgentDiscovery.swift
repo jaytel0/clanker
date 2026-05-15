@@ -50,6 +50,15 @@ private struct DiscoveredSession: Sendable {
         terminalName?.isEmpty == false || tty?.isEmpty == false
     }
 
+    var isLive: Bool {
+        switch sourceKind {
+        case .process, .appServer, .app:
+            return true
+        case .transcript:
+            return pid != nil || tty != nil || terminalName?.isEmpty == false
+        }
+    }
+
     func asAgentSession() -> AgentSession {
         AgentSession(
             id: id,
@@ -63,6 +72,7 @@ private struct DiscoveredSession: Sendable {
             pid: pid,
             terminalName: terminalName,
             tty: tty,
+            isLive: isLive,
             appBundleID: appBundleID,
             launchURL: launchURL
         )
@@ -101,12 +111,22 @@ private enum SessionMerger {
 
     private static func exactMatchIndex(for candidate: DiscoveredSession, in sessions: [DiscoveredSession]) -> Int? {
         if let key = candidate.sessionKey {
-            return sessions.firstIndex { $0.sessionKey == key }
+            if let index = sessions.firstIndex(where: { $0.sessionKey == key }) {
+                return index
+            }
         }
 
         if let tty = candidate.tty {
-            return sessions.firstIndex {
+            if let index = sessions.firstIndex(where: {
                 $0.harness == candidate.harness && $0.tty == tty
+            }) {
+                return index
+            }
+        }
+
+        if let pid = candidate.pid {
+            return sessions.firstIndex {
+                $0.harness == candidate.harness && $0.pid == pid
             }
         }
 
@@ -124,7 +144,18 @@ private enum SessionMerger {
             return abs(existing.lastActivity.timeIntervalSince(candidate.lastActivity)) < 12 * 60 * 60
         }
 
-        return matches.count == 1 ? matches[0] : nil
+        // When multiple candidates overlap on (harness, cwd) — e.g. several
+        // transcripts in the same Pi project dir from prior sessions — the
+        // old behaviour bailed entirely, leaving the live terminal session
+        // with its stale process-start `lastActivity`. That broke the
+        // "Working\u{2026}" pill, which keys off transcript-mtime freshness.
+        //
+        // Pick the match with the most recent activity instead. For a live
+        // process row that means absorbing the freshest transcript — which
+        // is the one the user is currently writing into. Stale transcripts
+        // remain in the merged set but are filtered out at the ViewModel
+        // (transcript-only rows fail `isLive`), so no UI duplication.
+        return matches.max { sessions[$0].lastActivity < sessions[$1].lastActivity }
     }
 
     private static func combine(_ lhs: DiscoveredSession, _ rhs: DiscoveredSession) -> DiscoveredSession {
@@ -157,6 +188,7 @@ private enum SessionMerger {
             case .waitingForApproval: 80
             case .waitingForInput: 70
             case .error: 60
+            case .working: 55
             case .runningTool: 50
             case .thinking: 45
             case .active: 40
@@ -299,6 +331,35 @@ private struct ProcessSnapshot: Sendable {
 private struct TerminalProcessSource {
     let snapshot: ProcessSnapshot
 
+    /// Pick the harness rooted closest to the user's prompt for this tty.
+    ///
+    /// Strategy: starting at the foreground process, walk the parent chain
+    /// upward; the first harness process we encounter on that walk is the
+    /// one the user typed. If the foreground process itself isn't yet known
+    /// (race or missing pid), fall back to the *lowest-PID* harness in the
+    /// tty's row set — first harness spawned tends to be the user's, with
+    /// any nested harnesses (codex app-server, etc.) coming later.
+    fileprivate func harnessRowFromForeground(
+        foregroundPid: Int?,
+        tty: String,
+        rows: [ProcessRow]
+    ) -> ProcessRow? {
+        if let foregroundPid {
+            var pid = foregroundPid
+            var depth = 0
+            while depth < 40, let row = snapshot.byPID[pid] {
+                if isHarnessProcess(row) { return row }
+                if pid == row.ppid { break }
+                pid = row.ppid
+                depth += 1
+            }
+        }
+        // Lowest-PID harness in the tty's set is a much better default than
+        // highest — child harnesses (Codex app-server spawned by Pi, vendor
+        // codex spawned by the node codex wrapper) always have larger PIDs.
+        return rows.sorted { $0.pid < $1.pid }.first(where: isHarnessProcess)
+    }
+
     func scan() -> [DiscoveredSession] {
         var sessions: [DiscoveredSession] = []
         var coveredPIDs = Set<Int>()
@@ -317,8 +378,26 @@ private struct TerminalProcessSource {
 
     private func sessionForTTY(_ tty: String, rows: [ProcessRow]) -> DiscoveredSession? {
         let terminal = rows.compactMap { snapshot.terminalContext(for: $0) }.first
-        let harnessRow = rows.sorted { $0.pid > $1.pid }.first(where: isHarnessProcess)
         let shellRow = bestShell(in: rows)
+
+        // Pick the harness the *user actually invoked* in this tab. The
+        // foreground process is the right anchor: ground truth for "what's
+        // running in this terminal". We walk the parent chain from there
+        // upward and grab the first harness we hit.
+        //
+        // Why not "highest PID matching isHarnessProcess"? Because tools
+        // routinely spawn other harnesses as children:
+        //   * `pi` spawns `codex app-server` for tool calls — highest PID
+        //     would pick the child (Codex), but the user invoked Pi.
+        //   * `codex` (node wrapper) spawns an inner codex vendor binary
+        //     whose cwd is the plugin cache, not the user's project —
+        //     highest PID would pick that child too, giving a junk cwd.
+        let foregroundPid = ProcessRunner.foregroundPID(for: tty)
+        let harnessRow = harnessRowFromForeground(
+            foregroundPid: foregroundPid,
+            tty: tty,
+            rows: rows
+        )
         let owner = harnessRow ?? shellRow ?? rows.sorted { $0.pid > $1.pid }.first
 
         guard terminal != nil || harnessRow != nil else { return nil }
@@ -326,7 +405,13 @@ private struct TerminalProcessSource {
         guard shellRow != nil || harnessRow != nil else { return nil }
 
         let harness = harnessRow.flatMap(harness(for:)) ?? .terminal
-        let cwd = ProcessRunner.cwd(for: harnessRow?.pid ?? owner.pid) ?? ProcessRunner.cwd(for: owner.pid) ?? NSHomeDirectory()
+        // Prefer cwd of the foreground process — that's the user-facing
+        // "where am I" answer. Fall back to the harness we picked, then
+        // shell, then home.
+        let cwd = (foregroundPid.flatMap { ProcessRunner.cwd(for: $0) })
+            ?? ProcessRunner.cwd(for: harnessRow?.pid ?? owner.pid)
+            ?? ProcessRunner.cwd(for: owner.pid)
+            ?? NSHomeDirectory()
         let title: String
         let preview: String
         let status: SessionStatusKind
@@ -558,12 +643,13 @@ private struct CodexTranscriptSource {
             }
         }
 
+        let recentlyModified = Date().timeIntervalSince(modified) < 90
         let status: SessionStatusKind
         if waitingForInput {
             status = .waitingForInput
-        } else if !pendingTools.isEmpty {
+        } else if recentlyModified, !pendingTools.isEmpty {
             status = .runningTool
-        } else if activeTurn || Date().timeIntervalSince(modified) < 90 {
+        } else if recentlyModified, activeTurn {
             status = .active
         } else {
             status = .completed
@@ -854,7 +940,7 @@ actor CodexAppServerSource {
         case "error", "failed":
             return .error
         default:
-            return .active
+            return .completed
         }
     }
 
@@ -1140,11 +1226,13 @@ private struct PiSessionSource {
         var cwd: String?
         var name: String?
         var firstUserMessage: String?
+        var latestUserMessage: String?
         var totalCost = 0.0
         var totalTokens = 0
         var modelWeights: [String: Double] = [:]
         var toolCallCount = 0
-        var hasError = false
+        var turnIsOpen = false
+        var latestAssistantStopReason: String?
         var firstTimestamp: Date?
         var lastTimestamp: Date?
 
@@ -1163,10 +1251,25 @@ private struct PiSessionSource {
             case "message":
                 let message = json["message"] as? [String: Any] ?? [:]
                 let role = DiscoveryHelpers.string(message["role"])
-                if role == "user", firstUserMessage == nil {
-                    firstUserMessage = DiscoveryHelpers.messageText(message)
+                if role == "user" {
+                    if let text = DiscoveryHelpers.userFacingMessageText(message) {
+                        firstUserMessage = firstUserMessage ?? text
+                        latestUserMessage = text
+                    }
+                    latestAssistantStopReason = nil
+                    turnIsOpen = true
                 }
                 if role == "assistant" {
+                    latestAssistantStopReason = DiscoveryHelpers.string(message["stopReason"])?.lowercased()
+                    switch latestAssistantStopReason {
+                    case "stop", "aborted", "error":
+                        turnIsOpen = false
+                    case "tooluse", "tool_use":
+                        turnIsOpen = true
+                    default:
+                        turnIsOpen = true
+                    }
+
                     if let usage = message["usage"] as? [String: Any] {
                         totalTokens += DiscoveryHelpers.int(usage["totalTokens"]) ?? 0
                         if let cost = usage["cost"] as? [String: Any],
@@ -1179,12 +1282,11 @@ private struct PiSessionSource {
                             modelWeights[model, default: 0] += 1
                         }
                     }
-                    if DiscoveryHelpers.string(message["stopReason"]) == "error" {
-                        hasError = true
-                    }
                     if let blocks = message["content"] as? [[String: Any]] {
                         toolCallCount += blocks.filter { $0["type"] as? String == "toolCall" }.count
                     }
+                } else if role == "toolResult" {
+                    turnIsOpen = true
                 }
             default:
                 break
@@ -1205,10 +1307,14 @@ private struct PiSessionSource {
             sessionKey: "pi:\(sessionID)",
             sourceKind: .transcript,
             id: "pi-\(sessionID)",
-            title: name ?? firstUserMessage ?? "Pi",
+            title: name ?? latestUserMessage ?? firstUserMessage ?? "Pi",
             cwd: cwdValue,
             harness: .pi,
-            status: hasError ? .error : (Date().timeIntervalSince(modified) < 10 * 60 ? .active : .completed),
+            status: piStatus(
+                turnIsOpen: turnIsOpen,
+                latestAssistantStopReason: latestAssistantStopReason,
+                modified: modified
+            ),
             preview: DiscoveryHelpers.truncated(preview, limit: 120),
             lastActivity: lastTimestamp ?? firstTimestamp ?? modified,
             pid: nil,
@@ -1223,6 +1329,20 @@ private struct PiSessionSource {
         let trimmed = value.trimmingCharacters(in: CharacterSet(charactersIn: "-"))
         guard !trimmed.isEmpty else { return NSHomeDirectory() }
         return "/" + trimmed.split(separator: "-").joined(separator: "/")
+    }
+
+    private func piStatus(
+        turnIsOpen: Bool,
+        latestAssistantStopReason: String?,
+        modified: Date
+    ) -> SessionStatusKind {
+        if latestAssistantStopReason == "error" {
+            return .error
+        }
+        if turnIsOpen {
+            return .working
+        }
+        return Date().timeIntervalSince(modified) < 10 * 60 ? .active : .completed
     }
 }
 
@@ -1486,6 +1606,17 @@ private enum DiscoveryHelpers {
         return nil
     }
 
+    static func userFacingMessageText(_ message: [String: Any]) -> String? {
+        guard let text = messageText(message) else { return nil }
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.hasPrefix("<skill "),
+              !trimmed.hasPrefix("<skill-name>"),
+              !trimmed.hasPrefix("<system-reminder>") else {
+            return nil
+        }
+        return trimmed
+    }
+
     static func normalizedToolName(_ name: String) -> String {
         name
             .replacingOccurrences(of: "_", with: "")
@@ -1541,6 +1672,32 @@ private enum ProcessRunner {
                 return String(line.dropFirst())
             }
             .first
+    }
+
+    /// Pid of the foreground process group leader for `tty`. This is
+    /// `tpgid` in `ps(1)` — the group `kill(0, ...)` would deliver SIGINT to
+    /// when the user presses ^C. It's the most reliable signal for "what's
+    /// the user actually interacting with in this terminal right now",
+    /// independent of how many child harnesses / wrappers are in the tree.
+    ///
+    /// `tty` should be the bare name (`ttys003`) or full path (`/dev/ttys003`);
+    /// we normalize to bare for `ps`.
+    static func foregroundPID(for tty: String) -> Int? {
+        let bare = tty.replacingOccurrences(of: "/dev/", with: "")
+        let output = run("/bin/ps", ["-t", bare, "-o", "pid=,tpgid=,stat="])
+        // Lines look like: " 7871  7871 S+". Foreground row has pid == tpgid
+        // and a `+` flag in stat. Either condition alone is sufficient on
+        // macOS but we apply both for paranoia.
+        for line in output.split(separator: "\n") {
+            let parts = line.split(separator: " ", omittingEmptySubsequences: true)
+            guard parts.count >= 3,
+                  let pid = Int(parts[0]),
+                  let tpgid = Int(parts[1]) else { continue }
+            if pid == tpgid && parts[2].contains("+") {
+                return pid
+            }
+        }
+        return nil
     }
 
     static func startDate(for pid: Int) -> Date? {

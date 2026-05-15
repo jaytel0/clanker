@@ -10,7 +10,11 @@ final class LocalSessionStore: ObservableObject {
     func start() {
         guard timer == nil else { return }
         refresh()
-        timer = Timer.scheduledTimer(withTimeInterval: 5, repeats: true) { [weak self] _ in
+        // 2s tick — fresh enough that the StatusPill's "Working\u{2026}"
+        // promotion (a 4s window keyed off transcript mtime) reliably picks
+        // up new bursts of agent activity. The full scan is dominated by a
+        // few cheap `ps` / `lsof` calls, so 2s is well under the budget.
+        timer = Timer.scheduledTimer(withTimeInterval: 2, repeats: true) { [weak self] _ in
             Task { @MainActor in
                 self?.refresh()
             }
