@@ -153,6 +153,18 @@ private struct RecentsSettingsView: View {
 
     var body: some View {
         Form {
+            Section("Default Terminal") {
+                Picker("Open recent projects in", selection: terminalBinding) {
+                    ForEach(TerminalApp.installedForSelection) { terminal in
+                        Text(terminal.displayName).tag(terminal.bundleID)
+                    }
+                }
+
+                Text("Used when you click a recent project in the notch. If the selected app is unavailable, Clanker falls back to Terminal.app instead of Finder.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
             Section("Project Roots") {
                 ForEach(Array(settings.roots.enumerated()), id: \.offset) { index, root in
                     HStack {
@@ -203,6 +215,13 @@ private struct RecentsSettingsView: View {
             hookInstalled = CdHookInstaller.isInstalled()
             settings.cdHookEnabled = hookInstalled
         }
+    }
+
+    private var terminalBinding: Binding<String> {
+        Binding(
+            get: { settings.preferredTerminalApp.bundleID },
+            set: { settings.preferredTerminalBundleID = $0 }
+        )
     }
 
     /// Two-way binding that performs the install/uninstall side effect when

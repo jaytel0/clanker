@@ -83,6 +83,7 @@ enum OnboardingScanner {
 struct OnboardingView: View {
     var onComplete: ([String]) -> Void
 
+    @ObservedObject private var settings = RecentsSettings.shared
     @State private var suggestions: [SuggestedRoot] = []
     @State private var isScanning = true
 
@@ -158,7 +159,11 @@ struct OnboardingView: View {
                     .foregroundStyle(.white.opacity(0.5))
             }
             .buttonStyle(.plain)
-            .padding(.bottom, 16)
+            .padding(.bottom, 14)
+
+            TerminalPreferenceRow(selectedBundleID: terminalBinding)
+                .padding(.horizontal, 24)
+                .padding(.bottom, 18)
 
             Divider()
                 .background(.white.opacity(0.08))
@@ -191,6 +196,13 @@ struct OnboardingView: View {
         }
     }
 
+    private var terminalBinding: Binding<String> {
+        Binding(
+            get: { settings.preferredTerminalApp.bundleID },
+            set: { settings.preferredTerminalBundleID = $0 }
+        )
+    }
+
     private func addFolder() {
         let panel = NSOpenPanel()
         panel.allowsMultipleSelection = true
@@ -207,6 +219,88 @@ struct OnboardingView: View {
                 suggestions[idx].isSelected = true
             }
         }
+    }
+}
+
+// MARK: - Terminal preference
+
+private struct TerminalPreferenceRow: View {
+    @Binding var selectedBundleID: String
+    @State private var hovering = false
+
+    private var selectedTerminal: TerminalApp {
+        TerminalApp.resolving(bundleID: selectedBundleID)
+    }
+
+    var body: some View {
+        HStack(spacing: 12) {
+            Image(systemName: "terminal")
+                .font(.system(size: 15, weight: .semibold))
+                .foregroundStyle(.white.opacity(0.8))
+                .frame(width: 28, height: 28)
+                .background(
+                    RoundedRectangle(cornerRadius: 7, style: .continuous)
+                        .fill(.white.opacity(0.08))
+                )
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text("Default terminal")
+                    .font(.system(size: 13, weight: .medium))
+                    .foregroundStyle(.white.opacity(0.9))
+                Text("Recent projects open in \(selectedTerminal.displayName).")
+                    .font(.system(size: 11))
+                    .foregroundStyle(.white.opacity(0.38))
+            }
+
+            Spacer()
+
+            Menu {
+                ForEach(TerminalApp.installedForSelection) { terminal in
+                    Button {
+                        selectedBundleID = terminal.bundleID
+                    } label: {
+                        HStack {
+                            Text(terminal.displayName)
+                            if terminal == selectedTerminal {
+                                Image(systemName: "checkmark")
+                            }
+                        }
+                    }
+                }
+            } label: {
+                HStack(spacing: 6) {
+                    Text(selectedTerminal.displayName)
+                    Image(systemName: "chevron.up.chevron.down")
+                        .font(.system(size: 9, weight: .bold))
+                        .foregroundStyle(.white.opacity(0.38))
+                }
+                .font(.system(size: 12, weight: .medium))
+                .foregroundStyle(.white.opacity(0.88))
+                .padding(.horizontal, 10)
+                .padding(.vertical, 6)
+                .background(
+                    RoundedRectangle(cornerRadius: 7, style: .continuous)
+                        .fill(.white.opacity(hovering ? 0.12 : 0.08))
+                )
+                .overlay(
+                    RoundedRectangle(cornerRadius: 7, style: .continuous)
+                        .stroke(.white.opacity(0.10), lineWidth: 0.5)
+                )
+            }
+            .buttonStyle(.plain)
+            .onHover { hovering = $0 }
+        }
+        .padding(10)
+        .background(
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .fill(.white.opacity(0.04))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .stroke(.white.opacity(0.07), lineWidth: 0.5)
+        )
+        .animation(.spring(response: 0.18, dampingFraction: 0.82), value: hovering)
+        .animation(.spring(response: 0.18, dampingFraction: 0.82), value: selectedBundleID)
     }
 }
 

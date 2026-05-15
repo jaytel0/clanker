@@ -168,9 +168,15 @@ final class NotchViewModel: ObservableObject {
         collapse()
     }
 
-    /// Performs an action on a recent project (open in Ghostty / Finder /
-    /// GitHub) and dismisses the notch so the user lands directly in the
-    /// destination surface.
+    /// Terminate the agent process backing this session (SIGTERM).
+    func closeSession(_ session: AgentSession) {
+        guard let pid = session.pid, pid > 0 else { return }
+        kill(pid_t(pid), SIGTERM)
+    }
+
+    /// Performs an action on a recent project (open in the preferred terminal /
+    /// Finder / GitHub) and dismisses the notch so the user lands directly in
+    /// the destination surface.
     func activate(_ project: RecentProject, action: RecentProjectAction) {
         RecentProjectActions.perform(action, project: project)
         collapse()

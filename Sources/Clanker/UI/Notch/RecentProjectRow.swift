@@ -2,7 +2,7 @@ import SwiftUI
 
 /// One row inside the notch's "Recent" section.
 ///
-/// Whole-row click = primary action (open in Ghostty). Hover reveals a small
+/// Whole-row click = primary action (open in the preferred terminal). Hover reveals a small
 /// trailing cluster of secondary actions (Finder, GitHub). Keeping the row's
 /// resting state visually quiet preserves the clean look of the notch when
 /// it first expands.
@@ -12,6 +12,7 @@ struct RecentProjectRow: View {
     let onFinder: () -> Void
     let onGithub: () -> Void
 
+    @ObservedObject private var settings = RecentsSettings.shared
     @State private var hovering = false
 
     var body: some View {
@@ -20,7 +21,7 @@ struct RecentProjectRow: View {
         }
         .buttonStyle(RecentRowButtonStyle(hovering: hovering, hasActiveSession: project.hasActiveSession))
         .onHover { hovering = $0 }
-        .help("Open \(project.name) in Ghostty")
+        .help("Open \(project.name) in \(TerminalLauncher.preferredDisplayName)")
     }
 
     private var content: some View {

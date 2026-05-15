@@ -15,6 +15,7 @@ final class RecentsSettings: ObservableObject {
         static let cdHookEnabled = "recents.cdHookEnabled"
         static let defaultRootsVersion = "recents.defaultRootsVersion"
         static let hasCompletedSetup = "recents.hasCompletedSetup"
+        static let preferredTerminalBundleID = "recents.preferredTerminalBundleID"
     }
 
     private static let currentDefaultRootsVersion = 1
@@ -35,6 +36,24 @@ final class RecentsSettings: ObservableObject {
     /// `true` once the user has finished the first-run setup flow.
     @Published var hasCompletedSetup: Bool {
         didSet { defaults.set(hasCompletedSetup, forKey: Key.hasCompletedSetup) }
+    }
+
+    /// Bundle identifier for the terminal used when opening recent projects.
+    /// Nil means "auto" — choose the first installed terminal in Clanker's
+    /// registry, falling back to Terminal.app.
+    @Published var preferredTerminalBundleID: String? {
+        didSet {
+            if let preferredTerminalBundleID {
+                defaults.set(preferredTerminalBundleID, forKey: Key.preferredTerminalBundleID)
+            } else {
+                defaults.removeObject(forKey: Key.preferredTerminalBundleID)
+            }
+        }
+    }
+
+    var preferredTerminalApp: TerminalApp {
+        get { TerminalApp.resolving(bundleID: preferredTerminalBundleID) }
+        set { preferredTerminalBundleID = newValue.bundleID }
     }
 
     private let defaults: UserDefaults
@@ -58,6 +77,7 @@ final class RecentsSettings: ObservableObject {
 
         self.cdHookEnabled = defaults.bool(forKey: Key.cdHookEnabled)
         self.hasCompletedSetup = defaults.bool(forKey: Key.hasCompletedSetup)
+        self.preferredTerminalBundleID = defaults.string(forKey: Key.preferredTerminalBundleID)
     }
 
     private static func defaultRoots() -> [String] {

@@ -21,6 +21,7 @@ final class GlobalNotchEventMonitor {
 
     private var moveMonitor: NSEventMonitorPair?
     private var downMonitor: NSEventMonitorPair?
+    private var keyMonitor: Any?
     private var lastMoveDispatch: Date = .distantPast
 
     /// Throttle global mouseMoved processing. The OS fires these at very high
@@ -47,11 +48,18 @@ final class GlobalNotchEventMonitor {
             self?.handleMouseDown()
         }
         downMonitor?.start()
+
+        keyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
+            if self?.handleKeyDown(event) == true { return nil }
+            return event
+        }
     }
 
     func stop() {
         moveMonitor?.stop(); moveMonitor = nil
         downMonitor?.stop(); downMonitor = nil
+        if let keyMonitor { NSEvent.removeMonitor(keyMonitor) }
+        keyMonitor = nil
     }
 
     // MARK: - Handlers
@@ -101,6 +109,20 @@ final class GlobalNotchEventMonitor {
                 closedWidth: cw
             )
             if inside { viewModel.toggleExpanded() }
+        }
+    }
+
+    private func handleKeyDown(_ event: NSEvent) -> Bool {
+        guard let viewModel, viewModel.isExpanded else { return false }
+        switch event.charactersIgnoringModifiers {
+        case "1":
+            viewModel.selectPane(.sessions)
+            return true
+        case "2":
+            viewModel.selectPane(.recents)
+            return true
+        default:
+            return false
         }
     }
 

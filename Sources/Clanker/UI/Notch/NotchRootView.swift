@@ -230,7 +230,8 @@ private struct ExpandedContent: View {
                         SessionGroupView(
                             group: group,
                             edgeInset: Self.edgeInset,
-                            onActivate: { viewModel.activate($0) }
+                            onActivate: { viewModel.activate($0) },
+                            onClose: { viewModel.closeSession($0) }
                         )
                     }
                 }
@@ -258,7 +259,7 @@ private struct ExpandedContent: View {
                         RecentProjectGroupView(
                             group: group,
                             edgeInset: Self.edgeInset,
-                            onPrimary: { viewModel.activate($0, action: .ghostty) },
+                            onPrimary: { viewModel.activate($0, action: .terminal) },
                             onFinder: { viewModel.activate($0, action: .finder) },
                             onGithub: { viewModel.activate($0, action: .github) }
                         )
@@ -754,6 +755,7 @@ private struct SessionGroupView: View {
     let group: SessionGroup
     let edgeInset: CGFloat
     let onActivate: (AgentSession) -> Void
+    let onClose: (AgentSession) -> Void
 
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
@@ -762,7 +764,7 @@ private struct SessionGroupView: View {
 
             VStack(spacing: 2) {
                 ForEach(group.sessions) { session in
-                    SessionRow(session: session, groupCwd: group.sessions.first?.cwd, onActivate: { onActivate(session) })
+                    SessionRow(session: session, groupCwd: group.sessions.first?.cwd, onActivate: { onActivate(session) }, onClose: { onClose(session) })
                         .padding(.horizontal, edgeInset)
                         .transition(.opacity.combined(with: .offset(y: 4)))
                 }
@@ -859,6 +861,7 @@ private struct SessionRow: View {
     /// to avoid repeating what the group header already states.
     var groupCwd: String? = nil
     let onActivate: () -> Void
+    var onClose: () -> Void = {}
 
     @State private var hovering = false
 
@@ -899,6 +902,23 @@ private struct SessionRow: View {
             Spacer(minLength: 8)
 
             CompactStatus(status: session.status, lastActivity: session.lastActivity)
+
+            if hovering {
+                Button(action: onClose) {
+                    Image(systemName: "xmark")
+                        .font(.system(size: 9, weight: .bold))
+                        .foregroundStyle(.white.opacity(0.5))
+                        .frame(width: 18, height: 18)
+                        .background(
+                            Circle()
+                                .fill(.white.opacity(0.08))
+                        )
+                        .contentShape(Circle())
+                }
+                .buttonStyle(.plain)
+                .transition(.opacity)
+                .help("Terminate session")
+            }
         }
         .padding(.horizontal, 10)
         .padding(.vertical, 6)

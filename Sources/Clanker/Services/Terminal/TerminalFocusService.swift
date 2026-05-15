@@ -401,34 +401,3 @@ fileprivate enum DesktopSpaceSwitcher {
         return false
     }
 }
-
-// MARK: - Terminal registry
-
-private enum TerminalApp {
-    case terminal, iterm, ghostty, warp, wezterm, kitty, alacritty
-
-    var bundleID: String {
-        switch self {
-        case .terminal: "com.apple.Terminal"
-        case .iterm: "com.googlecode.iterm2"
-        case .ghostty: "com.mitchellh.ghostty"
-        case .warp: "dev.warp.Warp-Stable"
-        case .wezterm: "com.github.wez.wezterm"
-        case .kitty: "net.kovidgoyal.kitty"
-        case .alacritty: "org.alacritty"
-        }
-    }
-
-    static func match(_ displayName: String) -> TerminalApp? {
-        switch displayName {
-        case "Terminal": .terminal
-        case "iTerm", "iTerm2": .iterm
-        case "Ghostty": .ghostty
-        case "Warp": .warp
-        case "WezTerm": .wezterm
-        case "Kitty": .kitty
-        case "Alacritty": .alacritty
-        default: nil
-        }
-    }
-}
