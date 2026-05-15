@@ -409,7 +409,13 @@ private struct ExpandedHeader: View {
                         leadingDot: true
                     )
                 }
-                SettingsCogButton(onShowOnboarding: viewModel.onShowOnboarding ?? {})
+                if viewModel.updateManager.availableUpdate != nil || viewModel.updateManager.state.isBusy {
+                    UpdatePill(updateManager: viewModel.updateManager)
+                }
+                SettingsCogButton(
+                    updateManager: viewModel.updateManager,
+                    onShowOnboarding: viewModel.onShowOnboarding ?? {}
+                )
             }
         }
     }
@@ -453,14 +459,68 @@ private struct HeaderPill: View {
     }
 }
 
-// MARK: - Settings cog
+// MARK: - Update + settings controls
+
+private struct UpdatePill: View {
+    @ObservedObject var updateManager: GitHubUpdateManager
+    @State private var hovering = false
+
+    var body: some View {
+        Button {
+            if updateManager.availableUpdate?.assetURL != nil {
+                updateManager.installAvailableUpdate()
+            } else {
+                updateManager.openAvailableReleasePage()
+            }
+        } label: {
+            HeaderPill(
+                text: title,
+                tint: NotchPalette.update,
+                leadingDot: !updateManager.state.isBusy
+            )
+        }
+        .buttonStyle(.plain)
+        .disabled(updateManager.state.isBusy)
+        .opacity(hovering ? 1.0 : 0.86)
+        .onHover { hovering = $0 }
+        .help(helpText)
+        .animation(NotchMotion.hover, value: hovering)
+    }
+
+    private var title: String {
+        switch updateManager.state {
+        case .checking:
+            return "Checking"
+        case .downloading:
+            return "Downloading"
+        case .installing:
+            return "Installing"
+        default:
+            if let update = updateManager.availableUpdate {
+                return "Update \(update.version)"
+            }
+            return "Update"
+        }
+    }
+
+    private var helpText: String {
+        guard let update = updateManager.availableUpdate else { return updateManager.state.statusText }
+        if update.assetURL == nil { return "View Clanker \(update.version) on GitHub" }
+        return "Install Clanker \(update.version)"
+    }
+}
 
 private struct SettingsCogButton: View {
+    @ObservedObject var updateManager: GitHubUpdateManager
     let onShowOnboarding: () -> Void
     @State private var hovering = false
 
     var body: some View {
         Menu {
+            updateMenuItems
+
+            Divider()
+
             Button {
                 onShowOnboarding()
             } label: {
@@ -486,6 +546,38 @@ private struct SettingsCogButton: View {
         .fixedSize()
         .onHover { hovering = $0 }
         .animation(NotchMotion.hover, value: hovering)
+    }
+
+    @ViewBuilder
+    private var updateMenuItems: some View {
+        if let update = updateManager.availableUpdate {
+            Button {
+                updateManager.installAvailableUpdate()
+            } label: {
+                Label("Install Clanker \(update.version)…", systemImage: "arrow.down.app")
+            }
+            .disabled(updateManager.state.isBusy || update.assetURL == nil)
+
+            Button {
+                updateManager.openAvailableReleasePage()
+            } label: {
+                Label("View Release Notes", systemImage: "doc.text")
+            }
+
+            Button {
+                updateManager.skipAvailableUpdate()
+            } label: {
+                Label("Skip This Version", systemImage: "forward.end")
+            }
+            .disabled(updateManager.state.isBusy)
+        } else {
+            Button {
+                updateManager.checkNow()
+            } label: {
+                Label("Check for Updates…", systemImage: "arrow.clockwise")
+            }
+            .disabled(updateManager.state.isBusy)
+        }
     }
 }
 
@@ -1101,6 +1193,7 @@ enum NotchPalette {
     /// color used by macOS itself.
     static let working = Color(red: 0.30, green: 0.85, blue: 0.39)
     static let completed = Color(red: 0.45, green: 0.78, blue: 0.95)
+    static let update = Color(red: 0.45, green: 0.72, blue: 1.00)
     static let idle = Color.white.opacity(0.5)
     static let error = Color(red: 0.98, green: 0.42, blue: 0.42)
 }

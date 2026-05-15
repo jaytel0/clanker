@@ -1,5 +1,6 @@
 import AppKit
 import ApplicationServices
+import Darwin
 import Foundation
 
 /// Routes a session back to the terminal/window that owns it.
@@ -36,11 +37,17 @@ enum TerminalFocusService {
     private static func focusHostApp(for session: AgentSession, terminal: TerminalApp?) -> Bool {
         switch terminal {
         case .terminal:
-            if let tty = session.tty, focusTerminalApp(tty: tty) { return true }
+            if let tty = session.tty, focusTerminalApp(tty: tty) {
+                switchToFrontWindowSpace(bundleID: TerminalApp.terminal.bundleID)
+                return true
+            }
             return activate(bundleID: TerminalApp.terminal.bundleID)
 
         case .iterm:
-            if let tty = session.tty, focusITerm(tty: tty) { return true }
+            if let tty = session.tty, focusITerm(tty: tty) {
+                switchToFrontWindowSpace(bundleID: TerminalApp.iterm.bundleID)
+                return true
+            }
             return activate(bundleID: TerminalApp.iterm.bundleID)
 
         case .ghostty, .warp, .wezterm, .kitty, .alacritty:
@@ -98,8 +105,29 @@ enum TerminalFocusService {
 
     // MARK: - Accessibility focus
 
+    private static func switchToFrontWindowSpace(bundleID: String) {
+        guard let app = NSRunningApplication.runningApplications(withBundleIdentifier: bundleID).first else {
+            return
+        }
+        let applicationElement = AXUIElementCreateApplication(app.processIdentifier)
+        var windowsValue: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(applicationElement, kAXWindowsAttribute as CFString, &windowsValue) == .success,
+              let window = (windowsValue as? [AXUIElement])?.first else {
+            _ = app.activate(options: [.activateAllWindows])
+            return
+        }
+
+        if let windowID = DesktopSpaceSwitcher.windowID(for: window) {
+            DesktopSpaceSwitcher.switchToSpace(containingWindowID: windowID)
+        }
+        _ = app.unhide()
+        _ = AXUIElementSetAttributeValue(applicationElement, kAXFrontmostAttribute as CFString, kCFBooleanTrue)
+        _ = app.activate(options: [.activateAllWindows])
+        _ = AXUIElementPerformAction(window, kAXRaiseAction as CFString)
+    }
+
     private static func focusAXWindow(for terminal: TerminalApp, session: AgentSession) -> Bool {
-        guard isAccessibilityTrusted(promptIfNeeded: true) else {
+        guard isAccessibilityTrusted(promptIfNeeded: false) else {
             return false
         }
 
@@ -125,7 +153,16 @@ enum TerminalFocusService {
 
         guard let match = matches.first else { return false }
 
+        // If the window lives on another Mission Control desktop/Space,
+        // normal app activation can leave the user on the current desktop.
+        // Jump to the window's Space first (best-effort private SkyLight API),
+        // then activate/raise/focus the exact AX window.
+        if let windowID = DesktopSpaceSwitcher.windowID(for: match.window) {
+            DesktopSpaceSwitcher.switchToSpace(containingWindowID: windowID)
+        }
+
         _ = app.unhide()
+        _ = AXUIElementSetAttributeValue(applicationElement, kAXFrontmostAttribute as CFString, kCFBooleanTrue)
         _ = app.activate(options: [.activateAllWindows])
         _ = AXUIElementPerformAction(match.window, kAXRaiseAction as CFString)
         _ = AXUIElementSetAttributeValue(match.window, kAXMainAttribute as CFString, kCFBooleanTrue)
@@ -260,6 +297,108 @@ enum TerminalFocusService {
             return false
         }
         return result.stringValue != "false"
+    }
+}
+
+// MARK: - Desktop / Space switching
+
+/// Best-effort bridge for Mission Control Spaces.
+///
+/// AppKit and Accessibility can activate an app and raise a window, but if the
+/// target window is on another desktop, macOS often keeps the user on the
+/// current desktop unless the global "switch to a Space with open windows" pref
+/// happens to be enabled. SkyLight exposes the missing primitive: given a
+/// window number, find its owning Space and make that Space current.
+///
+/// All symbols are loaded with `dlsym` so this remains a graceful no-op if a
+/// future macOS build moves/removes the private functions.
+fileprivate enum DesktopSpaceSwitcher {
+    typealias CGSConnectionID = Int32
+    typealias SpaceID = UInt64
+
+    private typealias CGSMainConnectionIDFunc = @convention(c) () -> CGSConnectionID
+    private typealias CGSCopySpacesForWindowsFunc = @convention(c) (CGSConnectionID, Int32, CFArray) -> Unmanaged<CFArray>?
+    private typealias CGSCopyManagedDisplaySpacesFunc = @convention(c) (CGSConnectionID) -> Unmanaged<CFArray>?
+    private typealias CGSManagedDisplaySetCurrentSpaceFunc = @convention(c) (CGSConnectionID, CFString, SpaceID) -> CGError
+    private typealias AXUIElementGetWindowFunc = @convention(c) (AXUIElement, UnsafeMutablePointer<CGWindowID>) -> AXError
+
+    static func windowID(for window: AXUIElement) -> CGWindowID? {
+        for attribute in ["AXWindowNumber", "_AXWindowNumber"] {
+            var value: CFTypeRef?
+            if AXUIElementCopyAttributeValue(window, attribute as CFString, &value) == .success,
+               let number = value as? NSNumber {
+                return CGWindowID(number.uint32Value)
+            }
+        }
+
+        guard let handle = dlopen(nil, RTLD_LAZY) else { return nil }
+        defer { dlclose(handle) }
+        guard let symbol = dlsym(handle, "_AXUIElementGetWindow") else {
+            return nil
+        }
+        let getWindow = unsafeBitCast(symbol, to: AXUIElementGetWindowFunc.self)
+        var windowID = CGWindowID(0)
+        guard getWindow(window, &windowID) == .success, windowID != 0 else {
+            return nil
+        }
+        return windowID
+    }
+
+    @discardableResult
+    static func switchToSpace(containingWindowID windowID: CGWindowID) -> Bool {
+        guard let skyLight = dlopen("/System/Library/PrivateFrameworks/SkyLight.framework/SkyLight", RTLD_LAZY) else {
+            return false
+        }
+        defer { dlclose(skyLight) }
+
+        guard let mainConnectionSymbol = dlsym(skyLight, "CGSMainConnectionID"),
+              let spacesForWindowsSymbol = dlsym(skyLight, "CGSCopySpacesForWindows"),
+              let managedDisplaySpacesSymbol = dlsym(skyLight, "CGSCopyManagedDisplaySpaces"),
+              let setCurrentSpaceSymbol = dlsym(skyLight, "CGSManagedDisplaySetCurrentSpace") else {
+            return false
+        }
+
+        let mainConnectionID = unsafeBitCast(mainConnectionSymbol, to: CGSMainConnectionIDFunc.self)
+        let copySpacesForWindows = unsafeBitCast(spacesForWindowsSymbol, to: CGSCopySpacesForWindowsFunc.self)
+        let copyManagedDisplaySpaces = unsafeBitCast(managedDisplaySpacesSymbol, to: CGSCopyManagedDisplaySpacesFunc.self)
+        let setCurrentSpace = unsafeBitCast(setCurrentSpaceSymbol, to: CGSManagedDisplaySetCurrentSpaceFunc.self)
+
+        let connection = mainConnectionID()
+        let windowIDs = [NSNumber(value: windowID)] as CFArray
+        // 7 = all spaces. Public constants don't exist for this private API.
+        guard let spacesRef = copySpacesForWindows(connection, 7, windowIDs),
+              let spaceNumber = (spacesRef.takeRetainedValue() as? [NSNumber])?.first else {
+            return false
+        }
+        let targetSpaceID = spaceNumber.uint64Value
+
+        guard let displaysRef = copyManagedDisplaySpaces(connection),
+              let displays = displaysRef.takeRetainedValue() as? [[String: Any]] else {
+            return false
+        }
+
+        for display in displays {
+            guard let displayID = display["Display Identifier"] as? String,
+                  let spaces = display["Spaces"] as? [[String: Any]] else {
+                continue
+            }
+
+            let ownsTargetSpace = spaces.contains { space in
+                if let id = space["id64"] as? NSNumber {
+                    return id.uint64Value == targetSpaceID
+                }
+                if let id = space["ManagedSpaceID"] as? NSNumber {
+                    return id.uint64Value == targetSpaceID
+                }
+                return false
+            }
+
+            if ownsTargetSpace {
+                return setCurrentSpace(connection, displayID as CFString, targetSpaceID) == .success
+            }
+        }
+
+        return false
     }
 }
 

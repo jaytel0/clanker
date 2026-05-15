@@ -30,6 +30,7 @@ final class NotchViewModel: ObservableObject {
     @Published private(set) var recents: [RecentProject] = []
 
     private let recentsStore: RecentProjectsStore?
+    let updateManager: GitHubUpdateManager
     private var cancellables = Set<AnyCancellable>()
     private var hoverOpenTask: Task<Void, Never>?
     private var hoverCloseTask: Task<Void, Never>?
@@ -40,9 +41,11 @@ final class NotchViewModel: ObservableObject {
 
     init(
         sessionStore: LocalSessionStore,
-        recentsStore: RecentProjectsStore? = nil
+        recentsStore: RecentProjectsStore? = nil,
+        updateManager: GitHubUpdateManager = .shared
     ) {
         self.recentsStore = recentsStore
+        self.updateManager = updateManager
 
         sessionStore.$sessions
             .removeDuplicates()

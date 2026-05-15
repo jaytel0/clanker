@@ -1,6 +1,12 @@
 import SwiftUI
 
 struct SettingsView: View {
+    @ObservedObject private var updateManager: GitHubUpdateManager
+
+    init(updateManager: GitHubUpdateManager = .shared) {
+        self.updateManager = updateManager
+    }
+
     var body: some View {
         TabView {
             GeneralSettingsView()
@@ -8,8 +14,11 @@ struct SettingsView: View {
 
             RecentsSettingsView()
                 .tabItem { Label("Recents", systemImage: "clock.arrow.circlepath") }
+
+            UpdateSettingsView(updateManager: updateManager)
+                .tabItem { Label("Updates", systemImage: "arrow.down.circle") }
         }
-        .frame(width: 460, height: 420)
+        .frame(width: 500, height: 460)
     }
 }
 
@@ -26,6 +35,112 @@ private struct GeneralSettingsView: View {
         }
         .formStyle(.grouped)
         .padding(20)
+    }
+}
+
+// MARK: - Updates
+
+private struct UpdateSettingsView: View {
+    @ObservedObject var updateManager: GitHubUpdateManager
+
+    var body: some View {
+        Form {
+            Section("Installed Version") {
+                HStack {
+                    Text("Clanker")
+                    Spacer()
+                    Text(updateManager.currentVersion)
+                        .foregroundStyle(.secondary)
+                        .monospacedDigit()
+                }
+
+                if let lastCheckDate = updateManager.lastCheckDate {
+                    HStack {
+                        Text("Last checked")
+                        Spacer()
+                        Text(lastCheckDate, style: .relative)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+            }
+
+            Section("Automatic Updates") {
+                Toggle("Check GitHub Releases automatically", isOn: $updateManager.automaticChecksEnabled)
+                Toggle("Show a quiet macOS notification", isOn: $updateManager.notificationsEnabled)
+                Text("Clanker checks the latest GitHub Release every few hours. When a new release is found, the notch menu shows an Update item and can install the downloaded Clanker.app in place.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
+            Section("Status") {
+                if let update = updateManager.availableUpdate {
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text("Clanker \(update.version) is available")
+                            .font(.headline)
+                        if !update.releaseName.isEmpty {
+                            Text(update.releaseName)
+                                .foregroundStyle(.secondary)
+                        }
+                        if !update.releaseNotes.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                            Text(update.releaseNotes)
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                                .lineLimit(4)
+                        }
+                        if case .failed(let message) = updateManager.state {
+                            Text(message)
+                                .font(.caption)
+                                .foregroundStyle(.red)
+                        }
+                    }
+
+                    HStack {
+                        Button("Install Update") {
+                            updateManager.installAvailableUpdate()
+                        }
+                        .buttonStyle(.borderedProminent)
+                        .disabled(updateManager.state.isBusy || update.assetURL == nil)
+
+                        Button("View Release") {
+                            updateManager.openAvailableReleasePage()
+                        }
+
+                        Spacer()
+
+                        Button("Skip This Version") {
+                            updateManager.skipAvailableUpdate()
+                        }
+                        .disabled(updateManager.state.isBusy)
+                    }
+                } else {
+                    Text(updateManager.state.statusText)
+                        .foregroundStyle(statusColor)
+                }
+
+                HStack {
+                    Button("Check Now") {
+                        updateManager.checkNow()
+                    }
+                    .disabled(updateManager.state.isBusy)
+
+                    Spacer()
+
+                    if updateManager.state.isBusy {
+                        ProgressView()
+                            .controlSize(.small)
+                    }
+                }
+            }
+        }
+        .formStyle(.grouped)
+        .padding(20)
+    }
+
+    private var statusColor: Color {
+        if case .failed = updateManager.state {
+            return .red
+        }
+        return .secondary
     }
 }
 

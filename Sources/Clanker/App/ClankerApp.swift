@@ -8,7 +8,7 @@ struct ClankerApp: App {
 
     var body: some Scene {
         Settings {
-            SettingsView()
+            SettingsView(updateManager: appDelegate.updateManager)
         }
     }
 }
@@ -17,6 +17,7 @@ struct ClankerApp: App {
 final class AppDelegate: NSObject, NSApplicationDelegate {
     private let sessionStore = LocalSessionStore()
     private lazy var recentsStore = RecentProjectsStore(sessionStore: sessionStore)
+    let updateManager = GitHubUpdateManager.shared
     private var notchController: NotchWindowController?
     private var notchViewModel: NotchViewModel?
     private var onboardingController: OnboardingWindowController?
@@ -32,6 +33,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         NSApp.setActivationPolicy(.accessory)
         sessionStore.start()
         recentsStore.start()
+        updateManager.start()
         requestAccessibilityIfNeeded()
 
         if RecentsSettings.shared.hasCompletedSetup {
@@ -69,7 +71,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         guard notchController == nil, let screen = NSScreen.main else { return }
         let viewModel = NotchViewModel(
             sessionStore: sessionStore,
-            recentsStore: recentsStore
+            recentsStore: recentsStore,
+            updateManager: updateManager
         )
         viewModel.onShowOnboarding = { [weak self] in
             self?.showOnboarding(fromSettings: true)
