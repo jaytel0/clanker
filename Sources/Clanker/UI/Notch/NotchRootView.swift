@@ -933,7 +933,7 @@ private struct SessionCloseButton: View {
                 .frame(width: 18, height: 18)
                 .background(
                     Circle()
-                        .fill(hovering ? NotchPalette.error.opacity(0.8) : .white.opacity(0.08))
+                        .fill(hovering ? Color.red.opacity(0.85) : .white.opacity(0.08))
                 )
                 .contentShape(Circle())
         }

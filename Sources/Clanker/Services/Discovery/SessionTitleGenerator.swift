@@ -214,7 +214,7 @@ enum SessionTitleText {
     }
 
     static func clean(_ value: String) -> String {
-        value
+        stripMarkdownFormatting(from: value)
             .replacingOccurrences(of: "\r\n", with: "\n")
             .replacingOccurrences(of: "\r", with: "\n")
             .replacingOccurrences(of: #"<[^>]+>"#, with: " ", options: .regularExpression)
@@ -299,6 +299,11 @@ enum SessionTitleText {
             "could we ",
             "could you ",
             "would you ",
+            "short answer: ",
+            "short answer - ",
+            "short answer ",
+            "answer: ",
+            "summary: ",
             "please ",
             "okay ",
             "ok ",
@@ -554,7 +559,7 @@ enum SessionTitleText {
         isFirst: Bool,
         preservedWords: [String: String]
     ) -> String {
-        let trimSet = CharacterSet(charactersIn: "\"'`.,:;!?()[]{}")
+        let trimSet = CharacterSet(charactersIn: "\"'`*_.,:;!?()[]{}")
         let prefix = String(value.prefix { character in
             String(character).rangeOfCharacter(from: trimSet) != nil
         })
@@ -579,6 +584,18 @@ enum SessionTitleText {
         }
 
         return prefix + lowercased + suffix
+    }
+
+    private static func stripMarkdownFormatting(from value: String) -> String {
+        value
+            .replacingOccurrences(of: #"`([^`]+)`"#, with: "$1", options: .regularExpression)
+            .replacingOccurrences(of: #"\*\*([^*]+)\*\*"#, with: "$1", options: .regularExpression)
+            .replacingOccurrences(of: #"__([^_]+)__"#, with: "$1", options: .regularExpression)
+            .replacingOccurrences(of: #"\*([^*]+)\*"#, with: "$1", options: .regularExpression)
+            .replacingOccurrences(of: #"(?m)^#{1,6}\s+"#, with: "", options: .regularExpression)
+            .replacingOccurrences(of: "**", with: "")
+            .replacingOccurrences(of: "__", with: "")
+            .replacingOccurrences(of: "`", with: "")
     }
 
     private static func looksLikeProcessLabel(_ value: String) -> Bool {
@@ -630,6 +647,7 @@ private enum FoundationModelSessionTitleGenerator {
             Return only a concise sentence-case title, 10 words or fewer.
             Do not mirror the user's question or write from the user's perspective.
             Prefer imperative task phrases like "Fix session titles" or "Improve model naming".
+            Do not use Markdown formatting, bullets, labels, or answer prefixes like "Short answer".
             Examples:
             "Can we make the foundation model naming better?" -> "Improve foundation model naming"
             "When I click on a session..." -> "Fix session click behavior"
