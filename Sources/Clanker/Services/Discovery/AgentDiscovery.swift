@@ -2,18 +2,42 @@ import AppKit
 import Foundation
 
 enum LocalSessionScanner {
+    private static let transcriptRefreshInterval: TimeInterval = 8
+
     static func scan() async -> [AgentSession] {
         let processSnapshot = ProcessSnapshot.capture()
         var discovered: [DiscoveredSession] = []
 
         discovered += TerminalProcessSource(snapshot: processSnapshot).scan()
-        discovered += CodexTranscriptSource(snapshot: processSnapshot).scan()
-        discovered += ClaudeSessionSource(snapshot: processSnapshot).scan()
-        discovered += PiSessionSource(snapshot: processSnapshot).scan()
+        discovered += ClaudeSessionSource(snapshot: processSnapshot).scanLive()
+        discovered += await TranscriptSessionCache.shared.sessions(
+            snapshot: processSnapshot,
+            refreshInterval: transcriptRefreshInterval
+        )
         discovered += await CodexAppServerSource.shared.scan()
         discovered += await MainActor.run { MacAppSource.scan() }
 
         return SessionTitleHeuristics.apply(to: SessionMerger.merge(discovered))
+    }
+}
+
+private actor TranscriptSessionCache {
+    static let shared = TranscriptSessionCache()
+
+    private var cached: [DiscoveredSession] = []
+    private var refreshedAt: Date = .distantPast
+
+    func sessions(snapshot: ProcessSnapshot, refreshInterval: TimeInterval) -> [DiscoveredSession] {
+        let now = Date()
+        guard cached.isEmpty || now.timeIntervalSince(refreshedAt) >= refreshInterval else {
+            return cached
+        }
+
+        cached = CodexTranscriptSource(snapshot: snapshot).scan()
+            + ClaudeSessionSource(snapshot: snapshot).scanHistorical()
+            + PiSessionSource(snapshot: snapshot).scan()
+        refreshedAt = now
+        return cached
     }
 }
 
@@ -59,6 +83,16 @@ private struct DiscoveredSession: Sendable {
         }
     }
 
+    var closeCapability: SessionCloseCapability {
+        SessionCloseCapabilityResolver.capability(
+            isLive: isLive,
+            isProcessSource: sourceKind == .process,
+            pid: pid,
+            terminalName: terminalName,
+            tty: tty
+        )
+    }
+
     func asAgentSession() -> AgentSession {
         AgentSession(
             id: id,
@@ -74,7 +108,8 @@ private struct DiscoveredSession: Sendable {
             tty: tty,
             isLive: isLive,
             appBundleID: appBundleID,
-            launchURL: launchURL
+            launchURL: launchURL,
+            closeCapability: closeCapability
         )
     }
 }
@@ -1048,7 +1083,15 @@ private struct ClaudeSessionSource {
     let snapshot: ProcessSnapshot
 
     func scan() -> [DiscoveredSession] {
-        liveSessionFiles() + transcriptFallbacks()
+        scanLive() + scanHistorical()
+    }
+
+    func scanLive() -> [DiscoveredSession] {
+        liveSessionFiles()
+    }
+
+    func scanHistorical() -> [DiscoveredSession] {
+        transcriptFallbacks()
     }
 
     private func liveSessionFiles() -> [DiscoveredSession] {
@@ -1773,6 +1816,7 @@ private enum CodexEditorDetector {
 final class CodexTranscriptIndex: @unchecked Sendable {
     static let shared = CodexTranscriptIndex()
 
+    private let lock = NSLock()
     private var cwdToThreadID: [String: String] = [:]
     private var builtAt: Date = .distantPast
     private let ttl: TimeInterval = 60
@@ -1780,6 +1824,9 @@ final class CodexTranscriptIndex: @unchecked Sendable {
     /// Returns the thread ID of the most recent Mac-app transcript (`source =
     /// "exec"`) whose `cwd` matches `path`, rebuilding the index when stale.
     func threadID(forCWD path: String) -> String? {
+        lock.lock()
+        defer { lock.unlock() }
+
         if Date().timeIntervalSince(builtAt) > ttl {
             rebuild()
         }

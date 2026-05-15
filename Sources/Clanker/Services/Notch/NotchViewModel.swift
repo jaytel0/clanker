@@ -208,10 +208,10 @@ final class NotchViewModel: ObservableObject {
         collapse()
     }
 
-    /// Close the terminal window/tab that owns this session, then kill the
-    /// agent process as a fallback.
-    func closeSession(_ session: AgentSession) {
-        TerminalCloseService.close(session)
+    /// Close the terminal window/tab that owns this session. Destructive
+    /// process-group termination is only allowed after the row asks the user.
+    func closeSession(_ session: AgentSession, allowProcessTermination: Bool = false) {
+        TerminalCloseService.close(session, allowProcessTermination: allowProcessTermination)
         // Trigger immediate refresh so the row disappears fast.
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { [weak self] in
             self?.sessionStore.refreshNow()

@@ -69,6 +69,20 @@ enum SessionStatusKind: String, Sendable {
     }
 }
 
+enum SessionCloseCapability: String, Sendable {
+    case none
+    case terminalSession
+    case processGroup
+
+    var canClose: Bool {
+        self != .none
+    }
+
+    var requiresConfirmation: Bool {
+        self == .processGroup
+    }
+}
+
 struct AgentSession: Identifiable, Equatable, Sendable {
     let id: String
     var title: String
@@ -92,6 +106,8 @@ struct AgentSession: Identifiable, Equatable, Sendable {
     var appBundleID: String?
     /// Deep link to the owning app/session when the provider exposes one.
     var launchURL: String?
+    /// Whether Clanker can safely offer a close control for this row.
+    var closeCapability: SessionCloseCapability = .none
 
     var needsAttention: Bool {
         status.needsAttention

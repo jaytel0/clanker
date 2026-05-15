@@ -67,20 +67,22 @@ final class HarnessUsageStore: ObservableObject {
 
 /// Lightweight disk cache that persists computed snapshots and file mtimes
 /// so subsequent launches skip unchanged files entirely.
-private final class HarnessUsageCache: Sendable {
-    private let cacheDir: URL = {
-        let base = FileManager.default.homeDirectoryForCurrentUser
-            .appendingPathComponent(".clanker/cache", isDirectory: true)
-        try? FileManager.default.createDirectory(at: base, withIntermediateDirectories: true)
-        return base
-    }()
+final class HarnessUsageCache: Sendable {
+    private static let schemaVersion = 1
+
+    private let cacheDir: URL
+
+    init(cacheDir: URL = HarnessUsageCache.defaultCacheDirectory()) {
+        self.cacheDir = cacheDir
+        try? FileManager.default.createDirectory(at: cacheDir, withIntermediateDirectories: true)
+    }
 
     private var snapshotsCacheURL: URL { cacheDir.appendingPathComponent("spend_snapshots.json") }
     private var mtimesCacheURL: URL { cacheDir.appendingPathComponent("spend_mtimes.json") }
 
     func load() -> [HarnessUsageSnapshot] {
         guard let data = try? Data(contentsOf: snapshotsCacheURL),
-              let decoded = try? JSONDecoder().decode([CachedSnapshot].self, from: data) else {
+              let decoded = decodeSnapshots(from: data) else {
             return []
         }
         return decoded.map(\.toSnapshot)
@@ -88,22 +90,76 @@ private final class HarnessUsageCache: Sendable {
 
     func loadMtimes() -> [String: Date] {
         guard let data = try? Data(contentsOf: mtimesCacheURL),
-              let decoded = try? JSONDecoder().decode([String: Date].self, from: data) else {
+              let decoded = decodeMtimes(from: data) else {
             return [:]
         }
         return decoded
     }
 
     func save(snapshots: [HarnessUsageSnapshot], mtimes: [String: Date]) {
-        let encoder = JSONEncoder()
-        encoder.dateEncodingStrategy = .secondsSince1970
-        if let data = try? encoder.encode(snapshots.map(CachedSnapshot.init)) {
+        let encoder = Self.makeEncoder()
+        let snapshotsFile = CachedSnapshotsFile(
+            schemaVersion: Self.schemaVersion,
+            snapshots: snapshots.map(CachedSnapshot.init)
+        )
+        if let data = try? encoder.encode(snapshotsFile) {
             try? data.write(to: snapshotsCacheURL, options: .atomic)
         }
-        if let data = try? encoder.encode(mtimes) {
+        let mtimesFile = CachedMtimesFile(
+            schemaVersion: Self.schemaVersion,
+            mtimes: mtimes
+        )
+        if let data = try? encoder.encode(mtimesFile) {
             try? data.write(to: mtimesCacheURL, options: .atomic)
         }
     }
+
+    private static func defaultCacheDirectory() -> URL {
+        FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent(".clanker/cache", isDirectory: true)
+    }
+
+    private func decodeSnapshots(from data: Data) -> [CachedSnapshot]? {
+        let decoder = Self.makeDecoder()
+        if let file = try? decoder.decode(CachedSnapshotsFile.self, from: data),
+           file.schemaVersion == Self.schemaVersion {
+            return file.snapshots
+        }
+
+        return try? decoder.decode([CachedSnapshot].self, from: data)
+    }
+
+    private func decodeMtimes(from data: Data) -> [String: Date]? {
+        let decoder = Self.makeDecoder()
+        if let file = try? decoder.decode(CachedMtimesFile.self, from: data),
+           file.schemaVersion == Self.schemaVersion {
+            return file.mtimes
+        }
+
+        return try? decoder.decode([String: Date].self, from: data)
+    }
+
+    private static func makeEncoder() -> JSONEncoder {
+        let encoder = JSONEncoder()
+        encoder.dateEncodingStrategy = .secondsSince1970
+        return encoder
+    }
+
+    private static func makeDecoder() -> JSONDecoder {
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .secondsSince1970
+        return decoder
+    }
+}
+
+private struct CachedSnapshotsFile: Codable {
+    var schemaVersion: Int
+    var snapshots: [CachedSnapshot]
+}
+
+private struct CachedMtimesFile: Codable {
+    var schemaVersion: Int
+    var mtimes: [String: Date]
 }
 
 /// Codable projection of `HarnessUsageSnapshot` for disk caching.
