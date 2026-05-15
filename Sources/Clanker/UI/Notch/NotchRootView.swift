@@ -202,6 +202,13 @@ private struct ExpandedContent: View {
                         .combined(with: .move(edge: .trailing))
                         .animation(NotchMotion.tab)
                 )
+        case .spend:
+            spendPane
+                .transition(
+                    .opacity
+                        .combined(with: .move(edge: .trailing))
+                        .animation(NotchMotion.tab)
+                )
         }
     }
 
@@ -263,6 +270,42 @@ private struct ExpandedContent: View {
         .scrollContentBackground(.hidden)
         .frame(maxHeight: .infinity)
     }
+
+    private var spendPane: some View {
+        ScrollView(.vertical, showsIndicators: false) {
+            VStack(alignment: .leading, spacing: 10) {
+                let summary = viewModel.spendSummary
+                if summary.snapshots.isEmpty {
+                    EmptyState(
+                        icon: "chart.bar.xaxis",
+                        title: "No spend yet",
+                        subtitle: "No usage snapshots were found."
+                    )
+                    .frame(maxWidth: .infinity)
+                    .padding(.top, 40)
+                } else {
+                    SpendOverview(summary: summary)
+                        .padding(.horizontal, Self.edgeInset)
+
+                    SpendBreakdownSection(
+                        title: "By harness",
+                        items: summary.byHarness,
+                        rowKind: .harness
+                    )
+
+                    SpendBreakdownSection(
+                        title: "By project",
+                        items: Array(summary.byProject.prefix(8)),
+                        rowKind: .project
+                    )
+                }
+            }
+            .padding(.bottom, 18)
+            .animation(NotchMotion.row, value: viewModel.usageSnapshots.map(\.id))
+        }
+        .scrollContentBackground(.hidden)
+        .frame(maxHeight: .infinity)
+    }
 }
 
 // MARK: - Pane tabs
@@ -271,6 +314,7 @@ private struct PaneTabBar: View {
     let selected: NotchPane
     let sessionsCount: Int
     let recentsCount: Int
+    let spendCount: Int
     let attentionCount: Int
     let onSelect: (NotchPane) -> Void
 
@@ -285,6 +329,10 @@ private struct PaneTabBar: View {
             tab(
                 .recents,
                 count: recentsCount
+            )
+            tab(
+                .spend,
+                count: spendCount
             )
             Spacer(minLength: 0)
         }
@@ -367,6 +415,7 @@ private struct ExpandedHeader: View {
                 selected: viewModel.selectedPane,
                 sessionsCount: viewModel.sessions.count,
                 recentsCount: viewModel.recents.count,
+                spendCount: viewModel.spendSummary.snapshots.count,
                 attentionCount: viewModel.attentionCount,
                 onSelect: { viewModel.selectPane($0) }
             )
@@ -930,6 +979,198 @@ private struct SessionCloseButton: View {
     }
 }
 
+// MARK: - Spend
+
+private struct SpendOverview: View {
+    let summary: SpendSummary
+
+    var body: some View {
+        HStack(spacing: 8) {
+            SpendMetric(
+                title: "Spend",
+                value: SpendFormatting.cost(summary.totalCostUSD),
+                detail: summary.costSource.title
+            )
+            SpendMetric(
+                title: "Tokens",
+                value: SpendFormatting.tokens(summary.totalTokens),
+                detail: "Observed"
+            )
+            SpendMetric(
+                title: "Sessions",
+                value: "\(summary.snapshots.count)",
+                detail: "30 days"
+            )
+        }
+    }
+}
+
+private struct SpendMetric: View {
+    let title: String
+    let value: String
+    let detail: String
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 3) {
+            Text(title)
+                .font(.system(size: 9.5, weight: .medium))
+                .foregroundStyle(.white.opacity(0.42))
+                .lineLimit(1)
+            Text(value)
+                .font(.system(size: 15, weight: .semibold, design: .rounded))
+                .monospacedDigit()
+                .foregroundStyle(.white.opacity(0.94))
+                .lineLimit(1)
+                .minimumScaleFactor(0.78)
+            Text(detail)
+                .font(.system(size: 9.5, weight: .semibold, design: .rounded))
+                .foregroundStyle(.white.opacity(0.48))
+                .lineLimit(1)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.horizontal, 10)
+        .padding(.vertical, 8)
+        .background {
+            RoundedRectangle(cornerRadius: 9, style: .continuous)
+                .fill(.white.opacity(0.055))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 9, style: .continuous)
+                        .stroke(.white.opacity(0.06), lineWidth: 0.5)
+                )
+        }
+    }
+}
+
+private enum SpendBreakdownRowKind {
+    case harness
+    case project
+}
+
+private struct SpendBreakdownSection: View {
+    let title: String
+    let items: [SpendBreakdownItem]
+    let rowKind: SpendBreakdownRowKind
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack {
+                Text(title)
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundStyle(.white.opacity(0.5))
+                Spacer(minLength: 0)
+            }
+            .padding(.horizontal, 22)
+            .padding(.top, 2)
+
+            VStack(spacing: 2) {
+                ForEach(items) { item in
+                    SpendBreakdownRow(item: item, rowKind: rowKind)
+                        .padding(.horizontal, 22)
+                }
+            }
+        }
+    }
+}
+
+private struct SpendBreakdownRow: View {
+    let item: SpendBreakdownItem
+    let rowKind: SpendBreakdownRowKind
+
+    var body: some View {
+        HStack(spacing: 9) {
+            leadingIcon
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text(item.title)
+                    .font(.system(size: 12, weight: .semibold))
+                    .tracking(-0.1)
+                    .foregroundStyle(.white)
+                    .lineLimit(1)
+
+                Text(item.subtitle)
+                    .font(.system(size: 10, weight: .regular))
+                    .foregroundStyle(.white.opacity(0.42))
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+            }
+
+            Spacer(minLength: 8)
+
+            VStack(alignment: .trailing, spacing: 3) {
+                HStack(spacing: 5) {
+                    Text(SpendFormatting.cost(item.costUSD))
+                        .font(.system(size: 11.5, weight: .semibold, design: .rounded))
+                        .monospacedDigit()
+                        .foregroundStyle(item.costUSD == nil ? .white.opacity(0.48) : .white.opacity(0.92))
+
+                    SpendSourceBadge(source: item.costSource)
+                }
+
+                Text("\(SpendFormatting.tokens(item.tokens.knownTotal)) tokens")
+                    .font(.system(size: 10, weight: .medium, design: .rounded))
+                    .monospacedDigit()
+                    .foregroundStyle(.white.opacity(0.42))
+            }
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 7)
+        .background {
+            RoundedRectangle(cornerRadius: 9, style: .continuous)
+                .fill(.white.opacity(0.045))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 9, style: .continuous)
+                        .stroke(.white.opacity(0.05), lineWidth: 0.5)
+                )
+        }
+    }
+
+    @ViewBuilder
+    private var leadingIcon: some View {
+        if rowKind == .harness, let harness = item.harness {
+            HarnessIcon(harness: harness, size: 22)
+        } else {
+            Image(systemName: "folder.fill")
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundStyle(NotchPalette.spend.opacity(0.9))
+                .frame(width: 22, height: 22)
+                .background(
+                    RoundedRectangle(cornerRadius: 6, style: .continuous)
+                        .fill(NotchPalette.spend.opacity(0.13))
+                )
+        }
+    }
+}
+
+private struct SpendSourceBadge: View {
+    let source: UsageCostSource
+
+    var body: some View {
+        Text(source.title)
+            .font(.system(size: 8.5, weight: .bold, design: .rounded))
+            .foregroundStyle(tint.opacity(0.92))
+            .lineLimit(1)
+            .padding(.horizontal, 5)
+            .padding(.vertical, 1.5)
+            .background {
+                Capsule(style: .continuous)
+                    .fill(tint.opacity(0.13))
+                    .overlay(
+                        Capsule(style: .continuous)
+                            .stroke(tint.opacity(0.24), lineWidth: 0.5)
+                    )
+            }
+    }
+
+    private var tint: Color {
+        switch source {
+        case .reported: NotchPalette.active
+        case .estimated: NotchPalette.spend
+        case .quotaOnly: NotchPalette.completed
+        case .unknown: NotchPalette.idle
+        }
+    }
+}
+
 // MARK: - Row button style
 
 /// Owns press/hover visuals so the underlying `Button` can drive activation
@@ -1273,6 +1514,7 @@ enum NotchPalette {
     static let working = Color(red: 0.36, green: 0.80, blue: 0.44)
     static let completed = Color(red: 0.48, green: 0.74, blue: 0.90)
     static let update = Color(red: 0.48, green: 0.70, blue: 0.96)
+    static let spend = Color(red: 0.76, green: 0.64, blue: 0.96)
     static let idle = Color.white.opacity(0.45)
     static let error = Color(red: 0.92, green: 0.44, blue: 0.42)
 }

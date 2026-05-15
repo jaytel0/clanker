@@ -10,13 +10,15 @@ import SwiftUI
 enum NotchPane: String, CaseIterable, Identifiable, Sendable {
     case sessions
     case recents
+    case spend
 
     var id: String { rawValue }
 
     var title: String {
         switch self {
         case .sessions: "Clankers"
-        case .recents: "Recent projects"
+        case .recents: "Projects"
+        case .spend: "Spend"
         }
     }
 }
@@ -28,6 +30,7 @@ final class NotchViewModel: ObservableObject {
     @Published var selectedPane: NotchPane = .sessions
     @Published private(set) var sessions: [AgentSession] = []
     @Published private(set) var recents: [RecentProject] = []
+    @Published private(set) var usageSnapshots: [HarnessUsageSnapshot] = []
 
     /// Set by the controller so the view knows which display type is active.
     @Published var screenHasNotch = false
@@ -41,6 +44,7 @@ final class NotchViewModel: ObservableObject {
 
     private let sessionStore: LocalSessionStore
     private let recentsStore: RecentProjectsStore?
+    private let usageStore: HarnessUsageStore?
     let updateManager: GitHubUpdateManager
     private var cancellables = Set<AnyCancellable>()
     private var hoverOpenTask: Task<Void, Never>?
@@ -53,10 +57,12 @@ final class NotchViewModel: ObservableObject {
     init(
         sessionStore: LocalSessionStore,
         recentsStore: RecentProjectsStore? = nil,
+        usageStore: HarnessUsageStore? = nil,
         updateManager: GitHubUpdateManager = .shared
     ) {
         self.sessionStore = sessionStore
         self.recentsStore = recentsStore
+        self.usageStore = usageStore
         self.updateManager = updateManager
 
         sessionStore.$sessions
@@ -78,6 +84,13 @@ final class NotchViewModel: ObservableObject {
             .removeDuplicates()
             .sink { [weak self] recents in
                 self?.recents = recents
+            }
+            .store(in: &cancellables)
+
+        usageStore?.$snapshots
+            .removeDuplicates()
+            .sink { [weak self] snapshots in
+                self?.usageSnapshots = snapshots
             }
             .store(in: &cancellables)
     }
@@ -130,6 +143,10 @@ final class NotchViewModel: ObservableObject {
         RecentProjectGroup.group(recents)
     }
 
+    var spendSummary: SpendSummary {
+        SpendSummary(snapshots: usageSnapshots)
+    }
+
     // MARK: - Intent
 
     func toggleExpanded() {
@@ -139,6 +156,7 @@ final class NotchViewModel: ObservableObject {
             // is current at the moment they look at it. Cheap — a few stat
             // calls per repo.
             recentsStore?.refreshOnDemand()
+            usageStore?.refreshNow()
         }
         withAnimation(NotchMotion.morph) {
             isExpanded.toggle()
@@ -212,6 +230,7 @@ final class NotchViewModel: ObservableObject {
     private func scheduleHoverOpen() {
         guard !isExpanded else { return }
         recentsStore?.refreshOnDemand()
+        usageStore?.refreshNow()
         withAnimation(NotchMotion.morph) {
             isExpanded = true
         }
@@ -301,7 +320,7 @@ extension Array where Element == AgentSession {
 enum NotchMotion {
     /// Container morph — slightly snappy, very low overshoot. Tuned to match
     /// the system Dynamic Island feel.
-    static let morph: Animation = .spring(response: 0.30, dampingFraction: 0.88, blendDuration: 0)
+    static let morph: Animation = .spring(response: 0.30, dampingFraction: 0.72, blendDuration: 0)
 
     /// Content fade/slide once the morph has settled.
     static let content: Animation = .spring(response: 0.34, dampingFraction: 0.92, blendDuration: 0)

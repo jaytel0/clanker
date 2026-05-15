@@ -17,6 +17,7 @@ struct ClankerApp: App {
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
     private let sessionStore = LocalSessionStore()
+    private let usageStore = HarnessUsageStore()
     private lazy var recentsStore = RecentProjectsStore(sessionStore: sessionStore)
     let updateManager = GitHubUpdateManager.shared
     private let displaySettings = NotchDisplaySettings.shared
@@ -35,6 +36,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         NSApp.setActivationPolicy(.accessory)
         sessionStore.start()
+        usageStore.start()
         recentsStore.start()
         updateManager.start()
         requestAccessibilityIfNeeded()
@@ -49,6 +51,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationWillTerminate(_ notification: Notification) {
         sessionStore.stop()
+        usageStore.stop()
         recentsStore.stop()
         screenPollTimer?.invalidate()
         for observer in screenObservers {
@@ -76,6 +79,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let viewModel = NotchViewModel(
             sessionStore: sessionStore,
             recentsStore: recentsStore,
+            usageStore: usageStore,
             updateManager: updateManager
         )
         viewModel.onShowOnboarding = { [weak self] in
