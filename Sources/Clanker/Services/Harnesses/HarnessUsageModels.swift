@@ -39,12 +39,13 @@ struct UsageTokenBreakdown: Equatable, Sendable {
     }
 
     mutating func add(_ other: UsageTokenBreakdown) {
+        let combinedTotal = knownTotal + other.knownTotal
         input = summed(input, other.input)
         output = summed(output, other.output)
         cacheWrite = summed(cacheWrite, other.cacheWrite)
         cacheRead = summed(cacheRead, other.cacheRead)
         reasoningOutput = summed(reasoningOutput, other.reasoningOutput)
-        total = summed(total, other.total)
+        total = combinedTotal > 0 ? combinedTotal : nil
     }
 
     private func summed(_ lhs: Int?, _ rhs: Int?) -> Int? {

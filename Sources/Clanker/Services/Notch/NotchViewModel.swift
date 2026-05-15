@@ -320,7 +320,7 @@ extension Array where Element == AgentSession {
 enum NotchMotion {
     /// Container morph — slightly snappy, very low overshoot. Tuned to match
     /// the system Dynamic Island feel.
-    static let morph: Animation = .spring(response: 0.30, dampingFraction: 0.72, blendDuration: 0)
+    static let morph: Animation = .spring(response: 0.30, dampingFraction: 0.78, blendDuration: 0)
 
     /// Content fade/slide once the morph has settled.
     static let content: Animation = .spring(response: 0.34, dampingFraction: 0.92, blendDuration: 0)

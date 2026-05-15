@@ -309,6 +309,13 @@ enum UsagePricingCatalog {
 
     static func estimateCost(provider: String?, model: String?, tokens: UsageTokenBreakdown) -> UsageCostEstimate? {
         guard let rates = rates(provider: provider, model: model) else { return nil }
+        guard tokens.input != nil
+            || tokens.output != nil
+            || tokens.cacheWrite != nil
+            || tokens.cacheRead != nil
+            || tokens.reasoningOutput != nil else {
+            return nil
+        }
         let cost = cost(for: tokens.input, rate: rates.inputPerMillion)
             + cost(for: tokens.output, rate: rates.outputPerMillion)
             + cost(for: tokens.cacheWrite, rate: rates.cacheWritePerMillion)
