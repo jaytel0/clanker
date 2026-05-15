@@ -11,15 +11,18 @@ final class LocalSessionStore: ObservableObject {
     func start() {
         guard timer == nil else { return }
         refresh()
-        // 2s tick — fresh enough that the StatusPill's "Working\u{2026}"
-        // promotion (a 4s window keyed off transcript mtime) reliably picks
-        // up new bursts of agent activity. The full scan is dominated by a
-        // few cheap `ps` / `lsof` calls, so 2s is well under the budget.
-        timer = Timer.scheduledTimer(withTimeInterval: 2, repeats: true) { [weak self] _ in
+        // 1s tick — keeps the list feeling live. The scan is just a few
+        // cheap `ps` / stat calls, well under budget at this rate.
+        timer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in
             Task { @MainActor in
                 self?.refresh()
             }
         }
+    }
+
+    /// Force an immediate refresh (e.g. after closing a session).
+    func refreshNow() {
+        refresh()
     }
 
     func stop() {

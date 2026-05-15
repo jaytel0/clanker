@@ -39,6 +39,7 @@ final class NotchViewModel: ObservableObject {
             : NotchWindowController.closedWidthFlat
     }
 
+    private let sessionStore: LocalSessionStore
     private let recentsStore: RecentProjectsStore?
     let updateManager: GitHubUpdateManager
     private var cancellables = Set<AnyCancellable>()
@@ -54,6 +55,7 @@ final class NotchViewModel: ObservableObject {
         recentsStore: RecentProjectsStore? = nil,
         updateManager: GitHubUpdateManager = .shared
     ) {
+        self.sessionStore = sessionStore
         self.recentsStore = recentsStore
         self.updateManager = updateManager
 
@@ -172,6 +174,10 @@ final class NotchViewModel: ObservableObject {
     /// agent process as a fallback.
     func closeSession(_ session: AgentSession) {
         TerminalCloseService.close(session)
+        // Trigger immediate refresh so the row disappears fast.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { [weak self] in
+            self?.sessionStore.refreshNow()
+        }
     }
 
     /// Performs an action on a recent project (open in the preferred terminal /
