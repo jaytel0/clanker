@@ -131,7 +131,7 @@ enum RecentProjectScanner {
 final class GithubURLCache: @unchecked Sendable {
     static let shared = GithubURLCache()
 
-    private let queue = DispatchQueue(label: "agentnotch.github-url-cache")
+    private let queue = DispatchQueue(label: "clanker.github-url-cache")
     private var cache: [String: URL?] = [:]
 
     func url(for repoPath: String) -> URL? {

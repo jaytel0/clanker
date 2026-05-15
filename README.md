@@ -1,4 +1,4 @@
-# Agent Notch
+# Clanker
 
 Local-first macOS dynamic-notch app concept for monitoring coding-agent sessions across Codex, Claude Code, Pi, terminals, and related harnesses.
 
@@ -8,7 +8,7 @@ Current state:
 
 - Specification complete enough to build against.
 - SwiftPM macOS scaffold exists.
-- `script/build_and_run.sh` builds and stages `dist/AgentNotch.app`.
+- `script/build_and_run.sh` builds and stages `dist/Clanker.app`.
 - The app launches the dynamic-notch shell and discovers local terminal, Codex, Claude Code, and Pi sessions from live processes, Codex app-server, and local transcript/session files.
 
 Run locally:

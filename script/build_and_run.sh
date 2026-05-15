@@ -2,8 +2,8 @@
 set -euo pipefail
 
 MODE="${1:-run}"
-APP_NAME="AgentNotch"
-BUNDLE_ID="dev.agentnotch.app"
+APP_NAME="Clanker"
+BUNDLE_ID="dev.clanker.app"
 MIN_SYSTEM_VERSION="14.0"
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -56,9 +56,9 @@ cat >"$INFO_PLIST" <<PLIST
   <key>LSUIElement</key>
   <true/>
   <key>NSAppleEventsUsageDescription</key>
-  <string>Agent Notch uses Apple Events to bring the selected terminal window to the front.</string>
+  <string>Clanker uses Apple Events to bring the selected terminal window to the front.</string>
   <key>NSAccessibilityUsageDescription</key>
-  <string>Agent Notch uses Accessibility to raise the exact terminal window for the selected session.</string>
+  <string>Clanker uses Accessibility to raise the exact terminal window for the selected session.</string>
   <key>NSPrincipalClass</key>
   <string>NSApplication</string>
 </dict>

@@ -1,12 +1,12 @@
-# Agent Notch Specification
+# Clanker Specification
 
-Working title: **Agent Notch**.
+Working title: **Clanker**.
 
 This document is the build contract for a local-first macOS dynamic-notch app that monitors ongoing terminal, Codex, Pi, Claude Code, and related coding-agent sessions. The product should feel closer to Ping Island / AgentPeek than to a menu bar popover. A menu bar item may exist only as a recovery/settings affordance; the primary interaction is the notch surface.
 
 ## 1. Product Goal
 
-Agent Notch gives a single, always-available overview of local and remote coding-agent work:
+Clanker gives a single, always-available overview of local and remote coding-agent work:
 
 - Which sessions are running.
 - Which project or repo each session belongs to.
@@ -27,7 +27,7 @@ Primary implementation reference:
 - Ping Island: `https://github.com/erha19/ping-island`
   - Apache 2.0.
   - Strongest baseline for notch UI, `NSPanel` overlay, hook socket bridge, hook installer, Codex app-server monitoring, terminal focusing, managed client profiles, IDE focus extensions, attention routing, and tests.
-  - Local code inspected under `/tmp/agent-notch-refs/ping-island`.
+  - Local code inspected under `/tmp/clanker-refs/ping-island`.
 
 Secondary references:
 
@@ -37,11 +37,11 @@ Secondary references:
 - Claudette: `https://github.com/emilevauge/claudette`
   - MIT.
   - Reference for Claude Code session polling, JSONL tail reads, Ghostty window/tab/split matching, busy/waiting heuristics, context status-line sidecar, and notifications.
-  - Local code inspected under `/tmp/agent-notch-refs/claudette`.
+  - Local code inspected under `/tmp/clanker-refs/claudette`.
 - PiScope: `https://github.com/vbehar/PiScope`
   - MIT.
   - Reference for Pi session file parsing, incremental mtime cache, cost/token/model extraction, and project aggregation from `~/.pi/agent/sessions`.
-  - Local code inspected under `/tmp/agent-notch-refs/PiScope`.
+  - Local code inspected under `/tmp/clanker-refs/PiScope`.
 - Official OpenAI Codex docs:
   - `https://developers.openai.com/codex/hooks`
   - `https://developers.openai.com/codex/app-server`
@@ -235,8 +235,8 @@ The app should support Ping Island-style detach:
 Recommended repo structure:
 
 ```text
-AgentNotch.xcodeproj
-AgentNotch/
+Clanker.xcodeproj
+Clanker/
   App/
   Core/
   Models/
@@ -253,22 +253,22 @@ AgentNotch/
     Sessions/
     Settings/
   Resources/
-AgentNotchBridge/
+ClankerBridge/
   Package.swift
-  Sources/AgentNotchBridge/
+  Sources/ClankerBridge/
 Tests/
-  AgentNotchTests/
-  AgentNotchBridgeTests/
+  ClankerTests/
+  ClankerBridgeTests/
 THIRD_PARTY.md
 NOTICE
 ```
 
 Targets:
 
-- `AgentNotch.app`: macOS accessory app.
-- `AgentNotchBridge`: small CLI binary invoked by hooks and plugins.
-- `AgentNotchTests`: app/service tests.
-- `AgentNotchBridgeTests`: payload mapping, stdout response, and integration tests.
+- `Clanker.app`: macOS accessory app.
+- `ClankerBridge`: small CLI binary invoked by hooks and plugins.
+- `ClankerTests`: app/service tests.
+- `ClankerBridgeTests`: payload mapping, stdout response, and integration tests.
 
 ### 7.2 Process Model
 
@@ -277,11 +277,11 @@ Agent CLI / IDE / Hook
         |
         | stdin JSON + env
         v
-AgentNotchBridge
+ClankerBridge
         |
         | Unix domain socket request
         v
-AgentNotch.app HookSocketServer
+Clanker.app HookSocketServer
         |
         v
 SessionStore
@@ -508,7 +508,7 @@ The bridge protocol is the normalized local contract between hook clients and th
 
 ```json
 {
-  "protocol": "agent-notch.bridge.v1",
+  "protocol": "clanker.bridge.v1",
   "id": "9FDD85DD-7D15-4583-8BB7-15EE7566F7F6",
   "provider": "codex",
   "clientProfileID": "codex-cli",
@@ -655,7 +655,7 @@ Tier 2 can be hidden behind an "Integrations" setting if not installed locally.
 
 ### 11.3 Custom Harnesses
 
-Allow users to add a custom hook command that emits `agent-notch.bridge.v1` envelopes.
+Allow users to add a custom hook command that emits `clanker.bridge.v1` envelopes.
 
 Settings fields:
 
@@ -815,19 +815,19 @@ Install procedure:
 1. Resolve profile config paths under real user home.
 2. Read existing config.
 3. Create backup on first write:
-   - `path.agent-notch.bak.<timestamp>`
-4. Remove prior Agent Notch managed entries.
+   - `path.clanker.bak.<timestamp>`
+4. Remove prior Clanker managed entries.
 5. Preserve unrelated hooks/settings.
-6. Add managed entries invoking `AgentNotchBridge`.
+6. Add managed entries invoking `ClankerBridge`.
 7. Write atomically.
 8. Validate by reading file back.
 9. Record installed version and profile in settings.
 
 Uninstall procedure:
 
-1. Remove only Agent Notch managed entries.
+1. Remove only Clanker managed entries.
 2. Preserve unrelated hooks/settings.
-3. Disable activation entry only if it points to Agent Notch.
+3. Disable activation entry only if it points to Clanker.
 4. Leave backups alone.
 
 ## 17. Privacy and Safety Contract
@@ -1105,7 +1105,7 @@ The project is ready for daily use when:
 
 ## 23. Open Questions
 
-- Product name: keep `Agent Notch`, rename to something repo-specific, or use a private codename.
+- Product name: keep `Clanker`, rename to something repo-specific, or use a private codename.
 - Whether to fork Ping Island directly or vendor specific files into a cleaner app skeleton.
 - Whether the menu bar fallback should be enabled by default or only behind a setting.
 - Whether remote SSH bridge support should be pulled in before or after Tier 2 integrations.

@@ -229,7 +229,7 @@ enum TerminalFocusService {
         let result = script.executeAndReturnError(&error)
         if let error {
             #if DEBUG
-            NSLog("[AgentNotch] AppleScript focus error: %@", error)
+            NSLog("[Clanker] AppleScript focus error: %@", error)
             #endif
             return false
         }

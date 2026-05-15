@@ -152,7 +152,7 @@ private struct ClosedStatusBadge: View {
                 }
                 .transition(.scale.combined(with: .opacity))
             } else {
-                Text("Agent Notch")
+                Text("Clanker")
                     .font(.system(size: 11, weight: .medium))
                     .foregroundStyle(.white.opacity(0.42))
                     .transition(.opacity)
@@ -383,7 +383,7 @@ private struct ExpandedHeader: View {
             )
 
             VStack(alignment: .leading, spacing: 1) {
-                Text("Agent Notch")
+                Text("Clanker")
                     .font(.system(size: 13, weight: .semibold))
                     .tracking(-0.1)
                     .foregroundStyle(.white)
@@ -550,7 +550,7 @@ private struct SessionGroupHeader: View {
     }
 
     /// Parent directory of the project's first session cwd, e.g. for
-    /// `~/Developer/personal/farm` returns `personal`. Empty string when we
+    /// `~/Developer/personal/clanker` returns `personal`. Empty string when we
     /// can't determine one (no sessions, weird path) — in that case the
     /// header just shows the project name with no breadcrumb prefix.
     private var parent: String {

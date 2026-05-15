@@ -1,7 +1,7 @@
 import Foundation
 
 /// Installs / removes a zsh `chpwd` hook that appends `cd` events to a log
-/// file Agent Notch reads to score project recency.
+/// file Clanker reads to score project recency.
 ///
 /// The hook lives between marker lines inside `~/.zshrc` so we can install,
 /// re-install (idempotent — replaces any prior block), and uninstall cleanly
@@ -20,22 +20,22 @@ enum CdHookInstaller {
     /// hooks belong in interactive-shell config.
     static let zshrcPath: String = (NSHomeDirectory() as NSString).appendingPathComponent(".zshrc")
 
-    static let beginMarker = "# >>> agent-notch chpwd hook >>>"
-    static let endMarker = "# <<< agent-notch chpwd hook <<<"
+    static let beginMarker = "# >>> clanker chpwd hook >>>"
+    static let endMarker = "# <<< clanker chpwd hook <<<"
 
     static var hookBlock: String {
         """
         \(beginMarker)
-        # Managed by Agent Notch. Do not edit between markers — reinstall from Settings.
-        __agent_notch_log_cd() {
-          local log_dir="${HOME}/Library/Application Support/AgentNotch"
+        # Managed by Clanker. Do not edit between markers — reinstall from Settings.
+        __clanker_log_cd() {
+          local log_dir="${HOME}/Library/Application Support/Clanker"
           local log_file="${log_dir}/cd-log.tsv"
           [[ -d "$log_dir" ]] || mkdir -p "$log_dir"
           printf '%s\\t%s\\n' "$(date +%s)" "$PWD" >> "$log_file"
         }
         typeset -ga chpwd_functions
-        chpwd_functions+=(__agent_notch_log_cd)
-        __agent_notch_log_cd
+        chpwd_functions+=(__clanker_log_cd)
+        __clanker_log_cd
         \(endMarker)
         """
     }

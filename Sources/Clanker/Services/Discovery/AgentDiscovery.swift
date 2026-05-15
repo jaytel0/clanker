@@ -947,7 +947,7 @@ actor CodexAppServerSource {
     private nonisolated static var initializeParams: [String: Any] {
         [
             "clientInfo": [
-                "name": "Agent Notch",
+                "name": "Clanker",
                 "version": "0.1.0"
             ],
             "capabilities": [

@@ -18,7 +18,7 @@ struct SettingsView: View {
 private struct GeneralSettingsView: View {
     var body: some View {
         Form {
-            Section("Agent Notch") {
+            Section("Clanker") {
                 Text("Local-first dynamic-notch monitor for coding-agent sessions.")
                 Text("Harness adapters discover Codex, Claude, Pi, and bare terminal sessions automatically.")
                     .foregroundStyle(.secondary)
@@ -71,7 +71,7 @@ private struct RecentsSettingsView: View {
 
             Section("Cd Hook") {
                 Toggle("Track `cd` events for sharper recency", isOn: hookBinding)
-                Text("Installs a marker-delimited block in `~/.zshrc` that appends each `cd` to a private log Agent Notch reads. Without it, recency is inferred from `.git/` mtimes only.")
+                Text("Installs a marker-delimited block in `~/.zshrc` that appends each `cd` to a private log Clanker reads. Without it, recency is inferred from `.git/` mtimes only.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
                 if let hookFeedback {

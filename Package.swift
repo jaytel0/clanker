@@ -3,19 +3,19 @@
 import PackageDescription
 
 let package = Package(
-    name: "AgentNotch",
+    name: "Clanker",
     platforms: [
         .macOS(.v14)
     ],
     products: [
-        .executable(name: "AgentNotch", targets: ["AgentNotch"])
+        .executable(name: "Clanker", targets: ["Clanker"])
     ],
     targets: [
         .executableTarget(
-            name: "AgentNotch",
-            path: "Sources/AgentNotch",
-            // Anything dropped under Sources/AgentNotch/Resources is
-            // bundled into the SPM-generated `AgentNotch_AgentNotch.bundle`
+            name: "Clanker",
+            path: "Sources/Clanker",
+            // Anything dropped under Sources/Clanker/Resources is
+            // bundled into the SPM-generated `Clanker_Clanker.bundle`
             // and loadable at runtime via `Bundle.module`. The build
             // script copies that bundle into `$APP_CONTENTS/Resources/` so
             // resources work in the packaged .app, not just `swift run`.

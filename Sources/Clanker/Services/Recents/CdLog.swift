@@ -11,7 +11,7 @@ enum CdLog {
             .urls(for: .applicationSupportDirectory, in: .userDomainMask)
             .first ?? URL(fileURLWithPath: NSHomeDirectory())
         return base
-            .appendingPathComponent("AgentNotch", isDirectory: true)
+            .appendingPathComponent("Clanker", isDirectory: true)
             .appendingPathComponent("cd-log.tsv", isDirectory: false)
     }
 
