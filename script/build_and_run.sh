@@ -38,6 +38,11 @@ for bundle in "$BUILD_BIN_DIR"/*.bundle; do
 done
 shopt -u nullglob
 
+# Copy app icon
+if [ -f "$ROOT_DIR/Sources/Clanker/Resources/AppIcon.icns" ]; then
+  cp "$ROOT_DIR/Sources/Clanker/Resources/AppIcon.icns" "$APP_CONTENTS/Resources/AppIcon.icns"
+fi
+
 cat >"$INFO_PLIST" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -59,6 +64,8 @@ cat >"$INFO_PLIST" <<PLIST
   <string>Clanker uses Apple Events to bring the selected terminal window to the front.</string>
   <key>NSAccessibilityUsageDescription</key>
   <string>Clanker uses Accessibility to raise the exact terminal window for the selected session.</string>
+  <key>CFBundleIconFile</key>
+  <string>AppIcon</string>
   <key>NSPrincipalClass</key>
   <string>NSApplication</string>
 </dict>

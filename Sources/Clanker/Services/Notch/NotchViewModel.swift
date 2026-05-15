@@ -244,7 +244,7 @@ extension Array where Element == AgentSession {
 enum NotchMotion {
     /// Container morph — slightly snappy, very low overshoot. Tuned to match
     /// the system Dynamic Island feel.
-    static let morph: Animation = .spring(response: 0.42, dampingFraction: 0.86, blendDuration: 0)
+    static let morph: Animation = .spring(response: 0.30, dampingFraction: 0.88, blendDuration: 0)
 
     /// Content fade/slide once the morph has settled.
     static let content: Animation = .spring(response: 0.34, dampingFraction: 0.92, blendDuration: 0)
@@ -253,7 +253,7 @@ enum NotchMotion {
     static let row: Animation = .spring(response: 0.45, dampingFraction: 0.82, blendDuration: 0)
 
     /// Hover micro-scale; very fast.
-    static let hover: Animation = .spring(response: 0.32, dampingFraction: 0.78, blendDuration: 0)
+    static let hover: Animation = .spring(response: 0.18, dampingFraction: 0.82, blendDuration: 0)
 
     /// Pane-to-pane swap inside the expanded notch. Apple's pre-tuned
     /// snappy spring — the same one SwiftUI uses for system segmented
