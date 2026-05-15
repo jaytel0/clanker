@@ -481,6 +481,21 @@ private struct TerminalProcessSource {
             case .terminal: title = row.executableName.nonEmpty ?? "Terminal"
             }
 
+            // A no-tty Codex process whose ancestor chain includes Codex.app
+            // is running inside the Mac app, not a terminal. Route it there.
+            let codexMacAppInfo: (bundleID: String?, launchURL: String?)
+            if harness == .codex, snapshot.isInsideCodexMacApp(pid: row.pid) {
+                // Best-effort: find the most recent "exec" transcript whose
+                // cwd matches this process so we can deep-link to the thread.
+                let threadID = CodexTranscriptIndex.shared.threadID(forCWD: cwd)
+                codexMacAppInfo = (
+                    bundleID: "com.openai.codex",
+                    launchURL: threadID.map { "codex://threads/\($0)" }
+                )
+            } else {
+                codexMacAppInfo = (nil, nil)
+            }
+
             return DiscoveredSession(
                 sessionKey: "\(harness.rawValue):pid:\(row.pid)",
                 sourceKind: .process,
@@ -494,8 +509,8 @@ private struct TerminalProcessSource {
                 pid: row.pid,
                 terminalName: nil,
                 tty: nil,
-                appBundleID: nil,
-                launchURL: nil
+                appBundleID: codexMacAppInfo.bundleID,
+                launchURL: codexMacAppInfo.launchURL
             )
         }
     }
@@ -670,8 +685,27 @@ private struct CodexTranscriptSource {
             ?? latestUserMessage
             ?? firstUserMessage
             ?? file.lastPathComponent
-        let isDesktop = source != "cli"
-        let launchURL = isDesktop ? "codex://threads/\(threadID)" : nil
+        // Determine where this session lives so tapping it reopens it correctly.
+        //
+        // source = "cli"     → user ran `codex` in a terminal; focus via tty/terminal.
+        // source = "exec"    → Codex Mac app spawned the session; deep-link back into it.
+        // source = "vscode"  → VS Code extension; open the editor, not the Mac app.
+        // source = subagent  → spawned by another agent; inherit no special routing.
+        // source = MISSING   → old format; treat as CLI (no reliable deep link).
+        let isMacAppSession = source == "exec"
+        let isVSCodeSession = source == "vscode"
+
+        let launchURL: String? = isMacAppSession ? "codex://threads/\(threadID)" : nil
+        let appBundleID: String?
+        if isMacAppSession {
+            appBundleID = "com.openai.codex"
+        } else if isVSCodeSession {
+            // Don't try to route through the Codex Mac app — just open the
+            // folder in whichever VS Code–like editor is running.
+            appBundleID = CodexEditorDetector.runningVSCodeBundleID()
+        } else {
+            appBundleID = nil
+        }
 
         let rawTitle = title
             ?? latestUserMessage
@@ -692,7 +726,7 @@ private struct CodexTranscriptSource {
             pid: nil,
             terminalName: nil,
             tty: nil,
-            appBundleID: isDesktop ? "com.openai.codex" : nil,
+            appBundleID: appBundleID,
             launchURL: launchURL
         )
     }
@@ -1676,6 +1710,106 @@ private enum DiscoveryHelpers {
             return String(format: "%.1fk", Double(value) / 1_000)
         }
         return "\(value)"
+    }
+}
+
+// MARK: - Codex origin helpers
+
+extension ProcessSnapshot {
+    /// Returns `true` when any ancestor of `pid` in the process tree has a
+    /// command path that includes `/Codex.app/`, indicating the process was
+    /// spawned by the Codex desktop Mac app rather than a terminal shell.
+    func isInsideCodexMacApp(pid: Int) -> Bool {
+        var current = pid
+        var depth = 0
+        var seen = Set<Int>()
+        while current > 1, depth < 50, seen.insert(current).inserted {
+            guard let row = byPID[current] else { break }
+            if row.command.contains("/Codex.app/") { return true }
+            current = row.ppid
+            depth += 1
+        }
+        return false
+    }
+}
+
+/// Detects which VS Code–like editor is currently running so transcript
+/// sessions with `source = "vscode"` route to the right app.
+private enum CodexEditorDetector {
+    /// Bundle IDs for editors that embed the Codex VS Code extension.
+    private static let candidates = [
+        "com.microsoft.VSCode",
+        "com.microsoft.VSCodeInsiders",
+        "com.todesktop.230313mzl4w4u92",  // Cursor
+        "com.exafunction.windsurf",
+        "com.codeium.windsurf"
+    ]
+
+    /// Returns the bundle ID of the first matching editor that has a running
+    /// process, or `nil` if none is detected. Called on a background thread
+    /// via process-list inspection rather than `NSRunningApplication` to avoid
+    /// a main-thread requirement.
+    static func runningVSCodeBundleID() -> String? {
+        let output = ProcessRunner.run("/bin/ps", ["-axo", "command="])
+        let commands = output.split(separator: "\n").map(String.init)
+        for candidate in candidates {
+            let appDir = candidate.components(separatedBy: ".").last.map { $0.capitalized } ?? ""
+            if commands.contains(where: { $0.contains(".app/Contents/MacOS/") && ($0.contains("/\(appDir).app/") || $0.localizedCaseInsensitiveContains(appDir)) }) {
+                return candidate
+            }
+        }
+        return nil
+    }
+}
+
+/// Lightweight index over recent Codex transcripts so live Mac-app processes
+/// can be matched to a `codex://threads/{id}` deep link via their working dir.
+final class CodexTranscriptIndex: @unchecked Sendable {
+    static let shared = CodexTranscriptIndex()
+
+    private var cwdToThreadID: [String: String] = [:]
+    private var builtAt: Date = .distantPast
+    private let ttl: TimeInterval = 60
+
+    /// Returns the thread ID of the most recent Mac-app transcript (`source =
+    /// "exec"`) whose `cwd` matches `path`, rebuilding the index when stale.
+    func threadID(forCWD path: String) -> String? {
+        if Date().timeIntervalSince(builtAt) > ttl {
+            rebuild()
+        }
+        let key = (path as NSString).standardizingPath
+        return cwdToThreadID[key]
+    }
+
+    private func rebuild() {
+        let root = FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent(".codex/sessions", isDirectory: true)
+        let files = DiscoveryHelpers.recentJSONLFiles(at: root, maxAge: 4 * 60 * 60, limit: 200)
+        var map: [String: (threadID: String, date: Date)] = [:]
+
+        for (file, modified) in files {
+            guard file.lastPathComponent.hasPrefix("rollout-"),
+                  let content = DiscoveryHelpers.readUTF8File(file, maxBytes: 2048) else {
+                continue
+            }
+            // Only read the first few lines to extract session_meta cheaply.
+            for line in content.split(separator: "\n", omittingEmptySubsequences: true).prefix(8) {
+                guard let json = DiscoveryHelpers.jsonObject(fromLine: line),
+                      json["type"] as? String == "session_meta" else { continue }
+                let payload = json["payload"] as? [String: Any] ?? [:]
+                guard let source = DiscoveryHelpers.string(payload["source"]),
+                      source == "exec" else { break }
+                guard let threadID = DiscoveryHelpers.string(payload["id"]),
+                      let cwd = DiscoveryHelpers.string(payload["cwd"]) else { break }
+                let key = (cwd as NSString).standardizingPath
+                if let existing = map[key], existing.date >= modified { break }
+                map[key] = (threadID, modified)
+                break
+            }
+        }
+
+        cwdToThreadID = map.mapValues(\.threadID)
+        builtAt = Date()
     }
 }
 
