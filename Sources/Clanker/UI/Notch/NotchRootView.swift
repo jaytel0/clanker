@@ -180,7 +180,6 @@ private struct ExpandedContent: View {
                 sessionsCount: viewModel.sessions.count,
                 recentsCount: viewModel.recents.count,
                 attentionCount: viewModel.attentionCount,
-                activeCount: viewModel.activeCount,
                 onSelect: { viewModel.selectPane($0) }
             )
             .padding(.horizontal, Self.edgeInset)
@@ -217,7 +216,7 @@ private struct ExpandedContent: View {
 
     private var sessionsPane: some View {
         ScrollView(.vertical, showsIndicators: false) {
-            VStack(alignment: .leading, spacing: 14) {
+            VStack(alignment: .leading, spacing: 12) {
                 if viewModel.sessions.isEmpty {
                     EmptyState(
                         icon: "moon.zzz.fill",
@@ -281,7 +280,6 @@ private struct PaneTabBar: View {
     let sessionsCount: Int
     let recentsCount: Int
     let attentionCount: Int
-    let activeCount: Int
     let onSelect: (NotchPane) -> Void
 
     var body: some View {
@@ -297,15 +295,6 @@ private struct PaneTabBar: View {
                 count: recentsCount
             )
             Spacer(minLength: 0)
-            if activeCount > 0 {
-                HeaderPill(
-                    text: "\(activeCount) active",
-                    tint: NotchPalette.active,
-                    leadingDot: true
-                )
-                .transition(.scale.combined(with: .opacity))
-                .animation(NotchMotion.content, value: activeCount)
-            }
         }
     }
 
@@ -388,16 +377,10 @@ private struct ExpandedHeader: View {
                 namespace: namespace
             )
 
-            VStack(alignment: .leading, spacing: 1) {
-                Text("Clanker")
-                    .font(.system(size: 13, weight: .semibold))
-                    .tracking(-0.1)
-                    .foregroundStyle(.white)
-
-                Text(headlineDetail)
-                    .font(.system(size: 11, weight: .medium))
-                    .foregroundStyle(.white.opacity(0.55))
-            }
+            Text("Clanker")
+                .font(.system(size: 13, weight: .semibold))
+                .tracking(-0.1)
+                .foregroundStyle(.white)
 
             Spacer(minLength: 8)
 
@@ -418,13 +401,6 @@ private struct ExpandedHeader: View {
                 )
             }
         }
-    }
-
-    private var headlineDetail: String {
-        let total = viewModel.sessions.count
-        if total == 0 { return "No sessions" }
-        if total == 1 { return "1 session" }
-        return "\(total) sessions"
     }
 }
 
@@ -602,11 +578,19 @@ private struct RecentProjectGroupView: View {
     let onGithub: (RecentProject) -> Void
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
+        VStack(alignment: .leading, spacing: 4) {
+            if group.title != "Today" {
+                Rectangle()
+                    .fill(.white.opacity(0.06))
+                    .frame(height: 0.5)
+                    .padding(.horizontal, edgeInset)
+                    .padding(.top, 6)
+            }
+
             RecentProjectGroupHeader(group: group)
                 .padding(.horizontal, edgeInset)
 
-            VStack(spacing: 4) {
+            VStack(spacing: 2) {
                 ForEach(group.projects) { project in
                     RecentProjectRow(
                         project: project,
@@ -619,7 +603,6 @@ private struct RecentProjectGroupView: View {
                 }
             }
         }
-        .padding(.top, group.title == "Today" ? 0 : 8)
     }
 }
 
@@ -627,24 +610,11 @@ private struct RecentProjectGroupHeader: View {
     let group: RecentProjectGroup
 
     var body: some View {
-        HStack(spacing: 8) {
+        HStack(spacing: 6) {
             Text(group.title)
-                .font(.system(size: 11.5, weight: .semibold, design: .rounded))
-                .foregroundStyle(.white.opacity(0.72))
+                .font(.system(size: 11, weight: .medium))
+                .foregroundStyle(.white.opacity(0.5))
                 .lineLimit(1)
-
-            if group.projects.count > 1 {
-                Text("\(group.projects.count)")
-                    .font(.system(size: 9.5, weight: .semibold, design: .rounded))
-                    .monospacedDigit()
-                    .foregroundStyle(.white.opacity(0.52))
-                    .padding(.horizontal, 5)
-                    .padding(.vertical, 1)
-                    .background(
-                        Capsule(style: .continuous)
-                            .fill(.white.opacity(0.07))
-                    )
-            }
 
             Spacer(minLength: 0)
         }
@@ -659,13 +629,13 @@ private struct SessionGroupView: View {
     let onActivate: (AgentSession) -> Void
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
+        VStack(alignment: .leading, spacing: 4) {
             SessionGroupHeader(group: group)
                 .padding(.horizontal, edgeInset)
 
-            VStack(spacing: 4) {
+            VStack(spacing: 2) {
                 ForEach(group.sessions) { session in
-                    SessionRow(session: session, onActivate: { onActivate(session) })
+                    SessionRow(session: session, groupCwd: group.sessions.first?.cwd, onActivate: { onActivate(session) })
                         .padding(.horizontal, edgeInset)
                         .transition(.opacity.combined(with: .offset(y: 4)))
                 }
@@ -690,30 +660,17 @@ private struct SessionGroupHeader: View {
 
     var body: some View {
         Button(action: openInFinder) {
-            HStack(spacing: 8) {
+            HStack(spacing: 6) {
                 (
                     Text(parent.isEmpty ? "" : parent + "/")
-                        .foregroundStyle(.white.opacity(hovering ? 0.45 : 0.32))
+                        .foregroundStyle(.white.opacity(hovering ? 0.45 : 0.28))
                     + Text(group.title)
-                        .foregroundStyle(.white.opacity(hovering ? 0.98 : 0.85))
+                        .foregroundStyle(.white.opacity(hovering ? 0.98 : 0.78))
                         .fontWeight(.semibold)
                 )
-                .font(.system(size: 11.5, design: .monospaced))
+                .font(.system(size: 11.5, weight: .medium))
                 .lineLimit(1)
                 .truncationMode(.middle)
-
-                if group.sessions.count > 1 {
-                    Text("\(group.sessions.count)")
-                        .font(.system(size: 9.5, weight: .semibold, design: .rounded))
-                        .monospacedDigit()
-                        .foregroundStyle(.white.opacity(0.55))
-                        .padding(.horizontal, 5)
-                        .padding(.vertical, 1)
-                        .background(
-                            Capsule(style: .continuous)
-                                .fill(.white.opacity(0.08))
-                        )
-                }
 
                 // Reveal-in-Finder affordance: appears on hover so the
                 // header reads cleanly at rest, then declares itself as
@@ -730,8 +687,6 @@ private struct SessionGroupHeader: View {
         .buttonStyle(.plain)
         .onHover { isHovering in
             hovering = isHovering
-            // `.pointerStyle(.link)` only exists on macOS 15+; fall back to
-            // the AppKit cursor stack so the deployment target stays at 14.
             if isHovering { NSCursor.pointingHand.push() } else { NSCursor.pop() }
         }
         .help("Reveal \(displayPath) in Finder")
@@ -773,6 +728,9 @@ private struct SessionGroupHeader: View {
 
 private struct SessionRow: View {
     let session: AgentSession
+    /// The cwd of the group — when the session's cwd matches, we hide it
+    /// to avoid repeating what the group header already states.
+    var groupCwd: String? = nil
     let onActivate: () -> Void
 
     @State private var hovering = false
@@ -786,50 +744,37 @@ private struct SessionRow: View {
         .help(focusHelp)
     }
 
+    private var showCwd: Bool {
+        guard let groupCwd else { return true }
+        return session.cwd != groupCwd
+    }
+
     private var rowContent: some View {
-        HStack(spacing: 10) {
-            HarnessIcon(harness: session.harness, size: 26)
+        HStack(spacing: 9) {
+            HarnessIcon(harness: session.harness, size: 22)
 
             VStack(alignment: .leading, spacing: 2) {
-                HStack(spacing: 6) {
-                    Text(session.title)
-                        .font(.system(size: 12.5, weight: .semibold))
-                        .tracking(-0.1)
-                        .foregroundStyle(.white)
-                        .lineLimit(1)
-
-                    if let terminal = session.terminalName {
-                        Text(terminal)
-                            .font(.system(size: 9.5, weight: .semibold, design: .rounded))
-                            .foregroundStyle(.white.opacity(0.62))
-                            .padding(.horizontal, 5)
-                            .padding(.vertical, 1.5)
-                            .background(
-                                Capsule(style: .continuous)
-                                    .fill(.white.opacity(0.08))
-                            )
-                    }
-                }
-
-                Text(session.cwd)
-                    .font(.system(size: 10.5, weight: .regular))
-                    .foregroundStyle(.white.opacity(0.5))
+                Text(session.title)
+                    .font(.system(size: 12, weight: .semibold))
+                    .tracking(-0.1)
+                    .foregroundStyle(.white)
                     .lineLimit(1)
-                    .truncationMode(.middle)
+
+                if showCwd {
+                    Text(session.cwd)
+                        .font(.system(size: 10, weight: .regular))
+                        .foregroundStyle(.white.opacity(0.4))
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                }
             }
 
             Spacer(minLength: 8)
 
-            VStack(alignment: .trailing, spacing: 4) {
-                StatusPill(status: session.status, lastActivity: session.lastActivity)
-                Text(relativeTime(session.lastActivity))
-                    .font(.system(size: 10, weight: .medium, design: .rounded))
-                    .monospacedDigit()
-                    .foregroundStyle(.white.opacity(0.42))
-            }
+            CompactStatus(status: session.status, lastActivity: session.lastActivity)
         }
         .padding(.horizontal, 10)
-        .padding(.vertical, 8)
+        .padding(.vertical, 6)
         .contentShape(Rectangle())
     }
 
@@ -838,17 +783,6 @@ private struct SessionRow: View {
             return "Focus \(terminal)"
         }
         return "Focus terminal"
-    }
-
-    private func relativeTime(_ date: Date) -> String {
-        let seconds = max(0, Int(Date().timeIntervalSince(date)))
-        if seconds < 5 { return "now" }
-        if seconds < 60 { return "\(seconds)s" }
-        let minutes = seconds / 60
-        if minutes < 60 { return "\(minutes)m" }
-        let hours = minutes / 60
-        if hours < 24 { return "\(hours)h" }
-        return "\(hours / 24)d"
     }
 }
 
@@ -911,54 +845,84 @@ private struct SessionRowButtonStyle: ButtonStyle {
 
 // MARK: - Status
 
-private struct StatusPill: View {
+/// Compact inline status: colored dot + relative time for normal states,
+/// full attention pill only for states that need user action.
+private struct CompactStatus: View {
     let status: SessionStatusKind
-    /// Last time the underlying session produced output. Used to derive
-    /// "Working\u{2026}" from `.active` / `.idle` rows when transcript bytes
-    /// have been flowing recently. Pass `nil` to disable promotion.
     var lastActivity: Date? = nil
 
-    /// Window during which a `.active` / `.idle` row should be shown as
-    /// "Working\u{2026}" after the most recent transcript write. Tuned so
-    /// short bursts of activity register but the pill returns to Idle
-    /// promptly once the agent stops talking.
     private static let workingWindow: TimeInterval = 4
 
     var body: some View {
-        // TimelineView gives the pill its own 1Hz clock so promotion to
-        // Working and the auto-decay back to Idle happen continuously,
-        // not just when the discovery loop fires (every few seconds).
         TimelineView(.periodic(from: .now, by: 1)) { context in
-            renderedPill(now: context.date)
+            rendered(now: context.date)
         }
     }
 
-    private func renderedPill(now: Date) -> some View {
+    private func rendered(now: Date) -> some View {
         let effective = effectiveStatus(now: now)
-        return HStack(spacing: 5) {
-            indicator(for: effective)
-            Text(effective.title)
-                .font(.system(size: 10, weight: .semibold, design: .rounded))
-                .foregroundStyle(textColor(for: effective))
-        }
-        .padding(.horizontal, 7)
-        .padding(.vertical, 3)
-        .background {
-            let t = tint(for: effective)
-            Capsule(style: .continuous)
-                .fill(t.opacity(backgroundOpacity(for: effective)))
-                .overlay(
-                    Capsule(style: .continuous)
-                        .stroke(t.opacity(borderOpacity(for: effective)), lineWidth: 0.5)
-                )
+        return Group {
+            if effective.needsAttention {
+                // Full pill only for attention states
+                attentionPill(for: effective)
+            } else {
+                // Minimal: dot + time
+                HStack(spacing: 5) {
+                    statusIndicator(for: effective)
+                    Text(relativeTime(lastActivity ?? now, now: now))
+                        .font(.system(size: 10, weight: .medium, design: .rounded))
+                        .monospacedDigit()
+                        .foregroundStyle(.white.opacity(0.4))
+                }
+            }
         }
         .animation(.easeInOut(duration: 0.18), value: effective)
     }
 
-    /// What the pill actually displays. Source-of-truth statuses set by
-    /// transcript parsers (.thinking, .runningTool) always count as Working.
-    /// Ambient ".active" / ".idle" rows are promoted to Working only when
-    /// there's been transcript activity inside `workingWindow`.
+    private func attentionPill(for status: SessionStatusKind) -> some View {
+        HStack(spacing: 5) {
+            PulsingDot(color: tint(for: status), diameter: 5, intensity: 1.2)
+            Text(status.title)
+                .font(.system(size: 10, weight: .semibold, design: .rounded))
+                .foregroundStyle(.white.opacity(0.92))
+        }
+        .padding(.horizontal, 7)
+        .padding(.vertical, 3)
+        .background {
+            let t = tint(for: status)
+            Capsule(style: .continuous)
+                .fill(t.opacity(0.18))
+                .overlay(
+                    Capsule(style: .continuous)
+                        .stroke(t.opacity(0.32), lineWidth: 0.5)
+                )
+        }
+    }
+
+    @ViewBuilder
+    private func statusIndicator(for status: SessionStatusKind) -> some View {
+        switch status {
+        case .working, .thinking, .runningTool:
+            PulsingDot(color: tint(for: status), diameter: 5)
+        case .completed:
+            Image(systemName: "checkmark")
+                .font(.system(size: 7, weight: .black))
+                .foregroundStyle(.black.opacity(0.65))
+                .frame(width: 8, height: 8)
+                .background(Circle().fill(tint(for: status)))
+        case .error:
+            Image(systemName: "exclamationmark")
+                .font(.system(size: 7, weight: .black))
+                .foregroundStyle(.black.opacity(0.65))
+                .frame(width: 8, height: 8)
+                .background(Circle().fill(tint(for: status)))
+        default:
+            Circle()
+                .fill(tint(for: status))
+                .frame(width: 5, height: 5)
+        }
+    }
+
     private func effectiveStatus(now: Date) -> SessionStatusKind {
         switch status {
         case .working, .thinking, .runningTool:
@@ -974,32 +938,6 @@ private struct StatusPill: View {
         }
     }
 
-    @ViewBuilder
-    private func indicator(for status: SessionStatusKind) -> some View {
-        switch status {
-        case .working, .thinking, .runningTool:
-            PulsingDot(color: tint(for: status), diameter: 5)
-        case .waitingForApproval, .waitingForInput:
-            PulsingDot(color: tint(for: status), diameter: 5, intensity: 1.2)
-        case .error:
-            Image(systemName: "exclamationmark")
-                .font(.system(size: 7, weight: .black))
-                .foregroundStyle(.black.opacity(0.65))
-                .frame(width: 8, height: 8)
-                .background(Circle().fill(tint(for: status)))
-        case .completed:
-            Image(systemName: "checkmark")
-                .font(.system(size: 7, weight: .black))
-                .foregroundStyle(.black.opacity(0.65))
-                .frame(width: 8, height: 8)
-                .background(Circle().fill(tint(for: status)))
-        case .active, .idle:
-            Circle()
-                .fill(tint(for: status))
-                .frame(width: 5, height: 5)
-        }
-    }
-
     private func tint(for status: SessionStatusKind) -> Color {
         switch status {
         case .waitingForApproval, .waitingForInput: NotchPalette.attention
@@ -1010,25 +948,15 @@ private struct StatusPill: View {
         }
     }
 
-    private func textColor(for status: SessionStatusKind) -> Color {
-        switch status {
-        case .active, .idle: .white.opacity(0.55)
-        default: .white.opacity(0.92)
-        }
-    }
-
-    private func backgroundOpacity(for status: SessionStatusKind) -> Double {
-        switch status {
-        case .active, .idle: 0.10
-        default: 0.18
-        }
-    }
-
-    private func borderOpacity(for status: SessionStatusKind) -> Double {
-        switch status {
-        case .active, .idle: 0.10
-        default: 0.32
-        }
+    private func relativeTime(_ date: Date, now: Date) -> String {
+        let seconds = max(0, Int(now.timeIntervalSince(date)))
+        if seconds < 5 { return "now" }
+        if seconds < 60 { return "\(seconds)s" }
+        let minutes = seconds / 60
+        if minutes < 60 { return "\(minutes)m" }
+        let hours = minutes / 60
+        if hours < 24 { return "\(hours)h" }
+        return "\(hours / 24)d"
     }
 }
 
@@ -1194,19 +1122,15 @@ private struct EmptyState: View {
 // MARK: - Palette
 
 enum NotchPalette {
-    static let attention = Color(red: 1.00, green: 0.78, blue: 0.30)
-    /// Reserved for the legacy `.active` color slot — unused now that
-    /// `.active` displays as Idle. Kept for any callers that still reference
-    /// it (currently the closed-bar accent ring).
-    static let active = Color(red: 0.36, green: 0.85, blue: 0.45)
-    /// Vivid system green for actively-producing agents ("Working\u{2026}").
-    /// Mirrors the SF system green so it reads as the same "live activity"
-    /// color used by macOS itself.
-    static let working = Color(red: 0.30, green: 0.85, blue: 0.39)
-    static let completed = Color(red: 0.45, green: 0.78, blue: 0.95)
-    static let update = Color(red: 0.45, green: 0.72, blue: 1.00)
-    static let idle = Color.white.opacity(0.5)
-    static let error = Color(red: 0.98, green: 0.42, blue: 0.42)
+    static let attention = Color(red: 0.94, green: 0.76, blue: 0.34)
+    static let active = Color(red: 0.38, green: 0.78, blue: 0.48)
+    /// Slightly desaturated green for working state — reads clearly on
+    /// black without being garish.
+    static let working = Color(red: 0.36, green: 0.80, blue: 0.44)
+    static let completed = Color(red: 0.48, green: 0.74, blue: 0.90)
+    static let update = Color(red: 0.48, green: 0.70, blue: 0.96)
+    static let idle = Color.white.opacity(0.45)
+    static let error = Color(red: 0.92, green: 0.44, blue: 0.42)
 }
 
 // MARK: - Namespace plumbing

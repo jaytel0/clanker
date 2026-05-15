@@ -24,18 +24,16 @@ struct RecentProjectRow: View {
     }
 
     private var content: some View {
-        HStack(spacing: 10) {
+        HStack(spacing: 9) {
             ProjectGlyph(hasActiveSession: project.hasActiveSession)
 
-            VStack(alignment: .leading, spacing: 2) {
+            VStack(alignment: .leading, spacing: 1) {
                 HStack(spacing: 6) {
                     Text(project.name)
-                        .font(.system(size: 12.5, weight: .semibold))
+                        .font(.system(size: 12, weight: .semibold))
                         .tracking(-0.1)
                         .foregroundStyle(.white)
                         .lineLimit(1)
-
-                    CategoryChip(text: project.category)
 
                     if project.hasActiveSession {
                         PulsingDot(color: NotchPalette.active, diameter: 5)
@@ -43,8 +41,8 @@ struct RecentProjectRow: View {
                 }
 
                 Text(abbreviatePath(project.path))
-                    .font(.system(size: 10.5, weight: .regular))
-                    .foregroundStyle(.white.opacity(0.5))
+                    .font(.system(size: 10, weight: .regular))
+                    .foregroundStyle(.white.opacity(0.38))
                     .lineLimit(1)
                     .truncationMode(.middle)
             }
@@ -54,7 +52,7 @@ struct RecentProjectRow: View {
             actionCluster
         }
         .padding(.horizontal, 10)
-        .padding(.vertical, 8)
+        .padding(.vertical, 6)
         .contentShape(Rectangle())
     }
 
@@ -95,7 +93,7 @@ private struct ProjectGlyph: View {
 
     var body: some View {
         ZStack {
-            RoundedRectangle(cornerRadius: 7, style: .continuous)
+            RoundedRectangle(cornerRadius: 5, style: .continuous)
                 .fill(
                     LinearGradient(
                         colors: gradient,
@@ -104,26 +102,26 @@ private struct ProjectGlyph: View {
                     )
                 )
             Image(systemName: "folder.fill")
-                .font(.system(size: 12, weight: .semibold))
-                .foregroundStyle(.white.opacity(0.92))
+                .font(.system(size: 10, weight: .semibold))
+                .foregroundStyle(.white.opacity(0.88))
         }
-        .frame(width: 26, height: 26)
+        .frame(width: 22, height: 22)
         .overlay(
-            RoundedRectangle(cornerRadius: 7, style: .continuous)
-                .stroke(.white.opacity(0.10), lineWidth: 0.5)
+            RoundedRectangle(cornerRadius: 5, style: .continuous)
+                .stroke(.white.opacity(0.08), lineWidth: 0.5)
         )
     }
 
     private var gradient: [Color] {
         if hasActiveSession {
             return [
-                Color(red: 0.32, green: 0.72, blue: 0.46),
-                Color(red: 0.18, green: 0.44, blue: 0.28)
+                Color(red: 0.32, green: 0.68, blue: 0.46),
+                Color(red: 0.18, green: 0.42, blue: 0.28)
             ]
         }
         return [
-            Color(red: 0.32, green: 0.34, blue: 0.38),
-            Color(red: 0.18, green: 0.19, blue: 0.22)
+            Color(red: 0.26, green: 0.28, blue: 0.32),
+            Color(red: 0.15, green: 0.16, blue: 0.19)
         ]
     }
 }
@@ -133,14 +131,8 @@ private struct CategoryChip: View {
 
     var body: some View {
         Text(text)
-            .font(.system(size: 9.5, weight: .semibold, design: .rounded))
-            .foregroundStyle(.white.opacity(0.62))
-            .padding(.horizontal, 5)
-            .padding(.vertical, 1.5)
-            .background(
-                Capsule(style: .continuous)
-                    .fill(.white.opacity(0.08))
-            )
+            .font(.system(size: 9.5, weight: .medium))
+            .foregroundStyle(.white.opacity(0.38))
     }
 }
 
