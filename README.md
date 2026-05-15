@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="Sources/Clanker/Resources/AppIcon.icns" width="128" height="128" alt="Clanker icon">
+  <img src="assets/icon.png" width="128" height="128" alt="Clanker icon">
 </p>
 
 <h1 align="center">Clanker</h1>
