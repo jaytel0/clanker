@@ -126,10 +126,10 @@ enum TerminalFocusService {
         guard let match = matches.first else { return false }
 
         _ = app.unhide()
-        _ = app.activate(options: [.activateAllWindows])
         _ = AXUIElementPerformAction(match.window, kAXRaiseAction as CFString)
         _ = AXUIElementSetAttributeValue(match.window, kAXMainAttribute as CFString, kCFBooleanTrue)
         _ = AXUIElementSetAttributeValue(match.window, kAXFocusedAttribute as CFString, kCFBooleanTrue)
+        _ = app.activate(options: [.activateAllWindows])
         return true
     }
 

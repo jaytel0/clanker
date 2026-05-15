@@ -151,8 +151,11 @@ final class NotchViewModel: ObservableObject {
 
     /// Activates the terminal that owns the session and dismisses the notch.
     func activate(_ session: AgentSession) {
-        TerminalFocusService.focus(session)
         collapse()
+        Task { @MainActor in
+            try? await Task.sleep(nanoseconds: 80_000_000)
+            TerminalFocusService.focus(session)
+        }
     }
 
     /// Performs an action on a recent project (open in Ghostty / Finder /
