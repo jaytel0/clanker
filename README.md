@@ -52,7 +52,6 @@ bash script/build_and_run.sh install
 ## Requirements
 
 - macOS 14 Sonoma or later
-- A MacBook with a notch (2021 MacBook Pro or newer)
 
 ## License
 
