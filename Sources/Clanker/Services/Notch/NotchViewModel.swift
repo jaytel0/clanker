@@ -213,17 +213,8 @@ final class NotchViewModel: ObservableObject {
 
     private func scheduleHoverClose() {
         guard isExpanded else { return }
-        hoverCloseTask = Task { [weak self] in
-            // 100ms — small dwell so a quick re-entry doesn't slam the panel
-            // shut, but fast enough that an intentional flick-out collapses
-            // promptly.
-            try? await Task.sleep(nanoseconds: 100_000_000)
-            guard !Task.isCancelled, let self, !self.isHovering, self.isExpanded else { return }
-            await MainActor.run {
-                withAnimation(NotchMotion.morph) {
-                    self.isExpanded = false
-                }
-            }
+        withAnimation(NotchMotion.morph) {
+            isExpanded = false
         }
     }
 

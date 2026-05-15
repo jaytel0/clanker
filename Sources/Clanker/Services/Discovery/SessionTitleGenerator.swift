@@ -163,6 +163,9 @@ struct SessionTitleContext: Sendable {
 }
 
 enum SessionTitleText {
+    private static let maxTitleWords = 10
+    private static let maxGeneratedTitleCharacters = 80
+
     static func displayTitle(from value: String, context: SessionTitleContext) -> String? {
         let cleaned = clean(value)
         guard !cleaned.isEmpty,
@@ -182,7 +185,7 @@ enum SessionTitleText {
             .filter { !$0.isEmpty }
 
         guard !words.isEmpty else { return nil }
-        let limited = words.prefix(6).joined(separator: " ")
+        let limited = words.prefix(maxTitleWords).joined(separator: " ")
         return phraseCase(limited)
     }
 
@@ -196,8 +199,8 @@ enum SessionTitleText {
             .trimmingCharacters(in: CharacterSet(charactersIn: ".:;- "))
 
         guard !title.isEmpty,
-              title.count <= 48,
-              title.split(separator: " ").count <= 7,
+              title.count <= maxGeneratedTitleCharacters,
+              title.split(separator: " ").count <= maxTitleWords,
               !isGeneric(title, harness: context.harness),
               !looksLikeProcessLabel(title),
               !looksLikeTranscriptFilename(title),
@@ -624,7 +627,7 @@ private enum FoundationModelSessionTitleGenerator {
             model: model,
             instructions: """
             You name local coding sessions by the active engineering task.
-            Return only a short sentence-case title, 2 to 5 words.
+            Return only a concise sentence-case title, 10 words or fewer.
             Do not mirror the user's question or write from the user's perspective.
             Prefer imperative task phrases like "Fix session titles" or "Improve model naming".
             Examples:
@@ -637,7 +640,7 @@ private enum FoundationModelSessionTitleGenerator {
 
         let response = try await session.respond(
             to: context.prompt,
-            options: GenerationOptions(temperature: 0.0, maximumResponseTokens: 16)
+            options: GenerationOptions(temperature: 0.0, maximumResponseTokens: 32)
         )
 
         return SessionTitleText.cleanGeneratedTitle(response.content, fallbackContext: context)

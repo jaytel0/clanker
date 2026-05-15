@@ -5,16 +5,25 @@ import Darwin
 /// Closes the terminal window/tab backing a session.
 ///
 /// Strategy:
-///   1. If the session has a tty, use AppleScript (Terminal.app / iTerm2) to
-///      close the specific tab.
-///   2. For Ghostty and other AX-driven terminals, find the matching window
-///      via accessibility and perform AXPress on its close button, or send
-///      Cmd+W after raising it.
-///   3. Fallback: SIGTERM the agent pid, which usually causes the shell to
-///      exit and the tab to close naturally.
+///   1. Kill the process *group* of the session's pid. This terminates the
+///      shell and all children cleanly, which causes the terminal to close
+///      the tab/window without any confirmation dialog (since no process is
+///      left running in it).
+///   2. If no pid, fall back to AX close button or AppleScript.
 @MainActor
 enum TerminalCloseService {
     static func close(_ session: AgentSession) {
+        // Primary: kill the process group so the shell exits cleanly.
+        // When the shell exits, terminals close the tab without prompting.
+        if let pid = session.pid, pid > 0 {
+            // Kill the process group (negative pid) so children die too.
+            kill(-pid_t(pid), SIGTERM)
+            // Also kill the process itself in case it's not the group leader.
+            kill(pid_t(pid), SIGTERM)
+            return
+        }
+
+        // Secondary: try terminal-specific close if we have no pid.
         let terminal = session.terminalName.flatMap(TerminalApp.match)
 
         switch terminal {
@@ -28,12 +37,6 @@ enum TerminalCloseService {
             if let terminal, closeAXWindow(for: terminal, session: session) { return }
         case .none:
             break
-        }
-
-        // Fallback: kill the agent process which typically causes the tab to
-        // close on its own.
-        if let pid = session.pid, pid > 0 {
-            kill(pid_t(pid), SIGTERM)
         }
     }
 
