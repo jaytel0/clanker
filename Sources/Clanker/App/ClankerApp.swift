@@ -1,4 +1,5 @@
 import AppKit
+import ApplicationServices
 import SwiftUI
 
 @main
@@ -31,6 +32,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         NSApp.setActivationPolicy(.accessory)
         sessionStore.start()
         recentsStore.start()
+        requestAccessibilityIfNeeded()
 
         if RecentsSettings.shared.hasCompletedSetup {
             showNotch()
@@ -139,6 +141,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func followActiveScreen() {
         guard let controller = notchController, let screen = NSScreen.main else { return }
         controller.moveToScreen(screen)
+    }
+
+    /// Ask for Accessibility permission exactly once — at launch — so the
+    /// prompt never interrupts a click. After granting, `AXIsProcessTrusted()`
+    /// returns `true` immediately for all subsequent checks.
+    private func requestAccessibilityIfNeeded() {
+        guard !AXIsProcessTrusted() else { return }
+        let options = ["AXTrustedCheckOptionPrompt": true] as CFDictionary
+        AXIsProcessTrustedWithOptions(options)
     }
 
     private func printSessionsAndTerminate() {

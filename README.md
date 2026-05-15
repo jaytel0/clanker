@@ -16,6 +16,10 @@
 
 ---
 
+<p align="center">
+  <img src="assets/screenshot.png" width="600" alt="Clanker expanded notch">
+</p>
+
 ## What it does
 
 Clanker lives in your MacBook's notch. Hover to expand — see every running agent session and recently visited project at a glance, then click to jump straight to it.

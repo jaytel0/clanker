@@ -74,7 +74,7 @@ enum TerminalFocusService {
     // MARK: - Accessibility focus
 
     private static func focusAXWindow(for terminal: TerminalApp, session: AgentSession) -> Bool {
-        guard isAccessibilityTrusted(promptIfNeeded: true) else {
+        guard isAccessibilityTrusted(promptIfNeeded: false) else {
             return false
         }
 
