@@ -205,19 +205,9 @@ final class NotchViewModel: ObservableObject {
 
     private func scheduleHoverOpen() {
         guard !isExpanded else { return }
-        hoverOpenTask = Task { [weak self] in
-            // 150ms — long enough that a cursor swipe across the top of the
-            // screen (passing through the notch en route to a menu bar item)
-            // doesn't trigger expansion, short enough that an intentional
-            // hover still feels immediate.
-            try? await Task.sleep(nanoseconds: 150_000_000)
-            guard !Task.isCancelled, let self, self.isHovering, !self.isExpanded else { return }
-            await MainActor.run {
-                self.recentsStore?.refreshOnDemand()
-                withAnimation(NotchMotion.morph) {
-                    self.isExpanded = true
-                }
-            }
+        recentsStore?.refreshOnDemand()
+        withAnimation(NotchMotion.morph) {
+            isExpanded = true
         }
     }
 
