@@ -33,6 +33,7 @@ final class NotchWindowController: NSWindowController {
     private let screen: NSScreen
     private let viewModel: NotchViewModel
     private var cancellables = Set<AnyCancellable>()
+    private var globalMouseMonitor: Any?
 
     init(screen: NSScreen, viewModel: NotchViewModel) {
         self.screen = screen
@@ -70,9 +71,35 @@ final class NotchWindowController: NSWindowController {
                 hostingView.window?.invalidateShadow()
             }
             .store(in: &cancellables)
+
+        installGlobalClickMonitor()
     }
 
+    /// Window controllers live for the entire app lifetime in this app, so we
+    /// don't bother tearing down the monitor in deinit — the OS reclaims it
+    /// at process exit. (Swift 6 strict concurrency forbids touching
+    /// non-Sendable stored properties from a nonisolated deinit anyway.)
+
     required init?(coder: NSCoder) { nil }
+
+    /// Collapse the notch the moment the user clicks anywhere outside our app.
+    ///
+    /// `addGlobalMonitorForEvents` only delivers events that were dispatched
+    /// to *other* applications, so a click landing on our visible silhouette
+    /// does not fire this monitor (it stays expanded as the user interacts).
+    /// Any click in the menu bar, dock, browser, etc. simultaneously reaches
+    /// its target app *and* dismisses the notch — if the notch happened to
+    /// have expanded by accident, it's gone before the user notices.
+    private func installGlobalClickMonitor() {
+        let viewModel = self.viewModel
+        globalMouseMonitor = NSEvent.addGlobalMonitorForEvents(
+            matching: [.leftMouseDown, .rightMouseDown, .otherMouseDown]
+        ) { _ in
+            Task { @MainActor in
+                viewModel.collapse()
+            }
+        }
+    }
 
     private static func canvasFrame(on screen: NSScreen) -> NSRect {
         NSRect(
