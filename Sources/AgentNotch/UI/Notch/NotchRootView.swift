@@ -89,51 +89,16 @@ struct NotchRootView: View {
 
 // MARK: - Notch shell
 
-/// The black notch silhouette plus its inner highlight and outer hairline.
-/// All visual depth lives here — content sits on top.
+/// Pure black notch silhouette — no rim, no inner highlight, no gradient.
+/// On a notched MacBook this blends seamlessly with the hardware notch so
+/// the agent UI reads as a single extension of the physical cutout.
 private struct NotchShell: View {
     let topRadius: CGFloat
     let bottomRadius: CGFloat
 
     var body: some View {
-        let shape = NotchShape(topRadius: topRadius, bottomRadius: bottomRadius)
-        ZStack {
-            // Pure black body.
-            shape.fill(.black)
-
-            // Inner top highlight — gives the notch a faint "carved glass"
-            // sheen as light grazes from above.
-            shape
-                .fill(
-                    LinearGradient(
-                        colors: [
-                            Color.white.opacity(0.07),
-                            Color.white.opacity(0.0)
-                        ],
-                        startPoint: .top,
-                        endPoint: .center
-                    )
-                )
-                .blendMode(.plusLighter)
-                .allowsHitTesting(false)
-
-            // Hairline rim — same trick Apple uses on Liquid Glass surfaces.
-            shape
-                .stroke(
-                    LinearGradient(
-                        colors: [
-                            Color.white.opacity(0.18),
-                            Color.white.opacity(0.04),
-                            Color.white.opacity(0.10)
-                        ],
-                        startPoint: .top,
-                        endPoint: .bottom
-                    ),
-                    lineWidth: 0.6
-                )
-                .blendMode(.plusLighter)
-                .allowsHitTesting(false)
-        }
+        NotchShape(topRadius: topRadius, bottomRadius: bottomRadius)
+            .fill(Color.black)
     }
 }
 

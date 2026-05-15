@@ -42,6 +42,10 @@ cat >"$INFO_PLIST" <<PLIST
   <string>$MIN_SYSTEM_VERSION</string>
   <key>LSUIElement</key>
   <true/>
+  <key>NSAppleEventsUsageDescription</key>
+  <string>Agent Notch uses Apple Events to bring the selected terminal window to the front.</string>
+  <key>NSAccessibilityUsageDescription</key>
+  <string>Agent Notch uses Accessibility to raise the exact terminal window for the selected session.</string>
   <key>NSPrincipalClass</key>
   <string>NSApplication</string>
 </dict>

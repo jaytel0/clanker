@@ -1,4 +1,5 @@
 import AppKit
+import ApplicationServices
 import Foundation
 
 /// Routes a session back to the terminal/window that owns it.
@@ -6,9 +7,9 @@ import Foundation
 /// Strategy (matching spec §14):
 ///   1. **Terminal.app / iTerm2** — drive AppleScript by tty so we focus the
 ///      *exact* tab/session, not just the app.
-///   2. **Ghostty / Warp / WezTerm / Kitty / Alacritty** — no first-party
-///      session AppleScript surface, so activate the app by bundle id and the
-///      OS will raise its key window. Better than nothing; degrades visibly.
+///   2. **Ghostty / Warp / WezTerm / Kitty / Alacritty** — use Accessibility
+///      window metadata (`AXTitle` / `AXDocument`) to raise the best matching
+///      window by cwd/project/harness, then fall back to app activation.
 ///   3. **Unknown** — best-effort: activate by name if we can resolve a
 ///      bundle, otherwise no-op.
 @MainActor
@@ -26,7 +27,9 @@ enum TerminalFocusService {
             return activate(bundleID: TerminalApp.iterm.bundleID)
 
         case .ghostty, .warp, .wezterm, .kitty, .alacritty:
-            return activate(bundleID: terminal!.bundleID)
+            guard let terminal else { return false }
+            if focusAXWindow(for: terminal, session: session) { return true }
+            return activate(bundleID: terminal.bundleID)
 
         case .none:
             // Last resort: if we have a name, try to launch/activate by it.
@@ -58,6 +61,107 @@ enum TerminalFocusService {
         let running = NSWorkspace.shared.runningApplications.first { $0.localizedName == name }
         if let running { return running.activate(options: [.activateAllWindows]) }
         return false
+    }
+
+    // MARK: - Accessibility focus
+
+    private static func focusAXWindow(for terminal: TerminalApp, session: AgentSession) -> Bool {
+        guard isAccessibilityTrusted(promptIfNeeded: true) else {
+            return false
+        }
+
+        guard let app = NSRunningApplication.runningApplications(withBundleIdentifier: terminal.bundleID).first else {
+            return false
+        }
+
+        let applicationElement = AXUIElementCreateApplication(app.processIdentifier)
+        var windowsValue: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(applicationElement, kAXWindowsAttribute as CFString, &windowsValue) == .success,
+              let windows = windowsValue as? [AXUIElement] else {
+            return false
+        }
+
+        let matches = windows.compactMap { window -> (window: AXUIElement, score: Int)? in
+            let title = stringAttribute(kAXTitleAttribute, from: window) ?? ""
+            let document = stringAttribute(kAXDocumentAttribute, from: window)
+            let score = scoreWindow(title: title, document: document, session: session)
+            guard score > 0 else { return nil }
+            return (window, score)
+        }
+        .sorted { $0.score > $1.score }
+
+        guard let match = matches.first else { return false }
+
+        _ = app.activate(options: [.activateAllWindows])
+        _ = AXUIElementPerformAction(match.window, kAXRaiseAction as CFString)
+        _ = AXUIElementSetAttributeValue(match.window, kAXMainAttribute as CFString, kCFBooleanTrue)
+        _ = AXUIElementSetAttributeValue(match.window, kAXFocusedAttribute as CFString, kCFBooleanTrue)
+        return true
+    }
+
+    private static func scoreWindow(title: String, document: String?, session: AgentSession) -> Int {
+        let normalizedTitle = title.lowercased()
+        let normalizedProject = session.projectName.lowercased()
+        let normalizedCWD = normalizedPath(expandingHomeIn(session.cwd))
+        let documentPath = document.flatMap(pathFromDocument).map(normalizedPath)
+        let isPiWindow = normalizedTitle.contains("π") || normalizedTitle.contains(" pi")
+
+        var score = 0
+        if let documentPath, documentPath == normalizedCWD {
+            score += 100
+        }
+        if normalizedTitle.contains(normalizedProject) {
+            score += 40
+        }
+
+        switch session.harness {
+        case .pi:
+            if isPiWindow { score += 25 }
+        case .codex, .claude, .terminal:
+            if !isPiWindow { score += 15 }
+        }
+
+        return score
+    }
+
+    private static func stringAttribute(_ attribute: String, from element: AXUIElement) -> String? {
+        var value: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(element, attribute as CFString, &value) == .success else {
+            return nil
+        }
+        return value as? String
+    }
+
+    private static func isAccessibilityTrusted(promptIfNeeded: Bool) -> Bool {
+        if AXIsProcessTrusted() {
+            return true
+        }
+
+        guard promptIfNeeded else { return false }
+        let options = ["AXTrustedCheckOptionPrompt": true] as CFDictionary
+        return AXIsProcessTrustedWithOptions(options)
+    }
+
+    private static func pathFromDocument(_ document: String) -> String? {
+        if let url = URL(string: document), url.isFileURL {
+            return url.path
+        }
+        return nil
+    }
+
+    private static func expandingHomeIn(_ path: String) -> String {
+        if path == "~" {
+            return NSHomeDirectory()
+        }
+        if path.hasPrefix("~/") {
+            return NSHomeDirectory() + String(path.dropFirst())
+        }
+        return path
+    }
+
+    private static func normalizedPath(_ path: String) -> String {
+        let standardized = (path as NSString).standardizingPath
+        return standardized.trimmingCharacters(in: CharacterSet(charactersIn: "/")).lowercased()
     }
 
     // MARK: - AppleScript focus
@@ -114,14 +218,14 @@ enum TerminalFocusService {
     private static func runAppleScript(_ source: String) -> Bool {
         guard let script = NSAppleScript(source: source) else { return false }
         var error: NSDictionary?
-        script.executeAndReturnError(&error)
+        let result = script.executeAndReturnError(&error)
         if let error {
             #if DEBUG
             NSLog("[AgentNotch] AppleScript focus error: %@", error)
             #endif
             return false
         }
-        return true
+        return result.stringValue != "false"
     }
 }
 
