@@ -16,13 +16,24 @@ import Foundation
 enum TerminalFocusService {
     @discardableResult
     static func focus(_ session: AgentSession) -> Bool {
-        if let launchURL = session.launchURL,
-           let url = URL(string: launchURL),
-           NSWorkspace.shared.open(url) {
+        let terminal = session.terminalName.flatMap(TerminalApp.match)
+
+        // Terminal-backed rows may also carry deep links from transcript or
+        // app-server metadata. Prefer returning to the host terminal/window;
+        // deep links are a fallback only when no host can be focused.
+        if session.tty != nil || session.terminalName != nil {
+            if focusHostApp(for: session, terminal: terminal) { return true }
+            return openLaunchURL(session.launchURL)
+        }
+
+        if openLaunchURL(session.launchURL) {
             return true
         }
 
-        let terminal = session.terminalName.flatMap(TerminalApp.match)
+        return focusHostApp(for: session, terminal: terminal)
+    }
+
+    private static func focusHostApp(for session: AgentSession, terminal: TerminalApp?) -> Bool {
         switch terminal {
         case .terminal:
             if let tty = session.tty, focusTerminalApp(tty: tty) { return true }
@@ -50,10 +61,19 @@ enum TerminalFocusService {
         }
     }
 
+    private static func openLaunchURL(_ launchURL: String?) -> Bool {
+        guard let launchURL,
+              let url = URL(string: launchURL) else {
+            return false
+        }
+        return NSWorkspace.shared.open(url)
+    }
+
     // MARK: - App activation
 
     private static func activate(bundleID: String) -> Bool {
         if let app = NSRunningApplication.runningApplications(withBundleIdentifier: bundleID).first {
+            _ = app.unhide()
             return app.activate(options: [.activateAllWindows])
         }
         guard let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleID) else {
@@ -66,15 +86,20 @@ enum TerminalFocusService {
     }
 
     private static func activate(byName name: String) -> Bool {
-        let running = NSWorkspace.shared.runningApplications.first { $0.localizedName == name }
-        if let running { return running.activate(options: [.activateAllWindows]) }
+        let running = NSWorkspace.shared.runningApplications.first {
+            $0.localizedName?.caseInsensitiveCompare(name) == .orderedSame
+        }
+        if let running {
+            _ = running.unhide()
+            return running.activate(options: [.activateAllWindows])
+        }
         return false
     }
 
     // MARK: - Accessibility focus
 
     private static func focusAXWindow(for terminal: TerminalApp, session: AgentSession) -> Bool {
-        guard isAccessibilityTrusted(promptIfNeeded: false) else {
+        guard isAccessibilityTrusted(promptIfNeeded: true) else {
             return false
         }
 
@@ -100,6 +125,7 @@ enum TerminalFocusService {
 
         guard let match = matches.first else { return false }
 
+        _ = app.unhide()
         _ = app.activate(options: [.activateAllWindows])
         _ = AXUIElementPerformAction(match.window, kAXRaiseAction as CFString)
         _ = AXUIElementSetAttributeValue(match.window, kAXMainAttribute as CFString, kCFBooleanTrue)

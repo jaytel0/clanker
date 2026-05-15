@@ -143,9 +143,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         controller.moveToScreen(screen)
     }
 
-    /// Ask for Accessibility permission exactly once — at launch — so the
-    /// prompt never interrupts a click. After granting, `AXIsProcessTrusted()`
-    /// returns `true` immediately for all subsequent checks.
+    /// Ask for Accessibility permission at launch so the first precise focus
+    /// attempt is usually ready. The focus service also re-prompts if trust is
+    /// later reset or the user switches to a newly signed build.
     private func requestAccessibilityIfNeeded() {
         guard !AXIsProcessTrusted() else { return }
         let options = ["AXTrustedCheckOptionPrompt": true] as CFDictionary

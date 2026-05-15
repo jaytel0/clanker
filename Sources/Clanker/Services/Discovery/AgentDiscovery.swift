@@ -177,9 +177,19 @@ private enum SessionMerger {
             pid: preferred.pid ?? other.pid,
             terminalName: preferred.terminalName ?? other.terminalName,
             tty: preferred.tty ?? other.tty,
-            appBundleID: preferred.appBundleID ?? other.appBundleID,
+            appBundleID: hostAppBundleID(preferred, other),
             launchURL: preferred.launchURL ?? other.launchURL
         )
+    }
+
+    private static func hostAppBundleID(_ lhs: DiscoveredSession, _ rhs: DiscoveredSession) -> String? {
+        if lhs.isTerminalBacked, let bundleID = lhs.appBundleID {
+            return bundleID
+        }
+        if rhs.isTerminalBacked, let bundleID = rhs.appBundleID {
+            return bundleID
+        }
+        return lhs.appBundleID ?? rhs.appBundleID
     }
 
     private static func mostImportantStatus(_ lhs: SessionStatusKind, _ rhs: SessionStatusKind) -> SessionStatusKind {
