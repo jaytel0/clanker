@@ -148,9 +148,10 @@ private struct ClosedStatusBadge: View {
                 }
                 .transition(.scale.combined(with: .opacity))
             } else {
-                Text("Clanker")
-                    .font(.system(size: 11, weight: .medium))
-                    .foregroundStyle(.white.opacity(0.42))
+                Text("0")
+                    .font(.system(size: 11, weight: .semibold, design: .rounded))
+                    .monospacedDigit()
+                    .foregroundStyle(.white.opacity(0.36))
                     .transition(.opacity)
             }
         }
