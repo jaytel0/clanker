@@ -5,39 +5,59 @@ import Darwin
 /// Closes the terminal window/tab backing a session.
 ///
 /// Strategy:
-///   1. Kill the process *group* of the session's pid. This terminates the
-///      shell and all children cleanly, which causes the terminal to close
-///      the tab/window without any confirmation dialog (since no process is
-///      left running in it).
-///   2. If no pid, fall back to AX close button or AppleScript.
+///   1. Prefer terminal-native tab/session close by tty or AX window match.
+///   2. Only send SIGTERM to a process group after the caller explicitly
+///      allows destructive termination and the pid is the process-group owner.
 @MainActor
 enum TerminalCloseService {
-    static func close(_ session: AgentSession) {
-        // Primary: kill the process group so the shell exits cleanly.
-        // When the shell exits, terminals close the tab without prompting.
-        if let pid = session.pid, pid > 0 {
-            // Kill the process group (negative pid) so children die too.
-            kill(-pid_t(pid), SIGTERM)
-            // Also kill the process itself in case it's not the group leader.
-            kill(pid_t(pid), SIGTERM)
-            return
+    @discardableResult
+    static func close(_ session: AgentSession, allowProcessTermination: Bool = false) -> Bool {
+        guard session.closeCapability.canClose else { return false }
+
+        if closeTerminalSession(session) {
+            return true
         }
 
-        // Secondary: try terminal-specific close if we have no pid.
+        guard allowProcessTermination,
+              let pid = session.pid,
+              let processGroupID = verifiedProcessGroupID(for: pid) else {
+            return false
+        }
+
+        return kill(-processGroupID, SIGTERM) == 0 || errno == ESRCH
+    }
+
+    private static func closeTerminalSession(_ session: AgentSession) -> Bool {
         let terminal = session.terminalName.flatMap(TerminalApp.match)
 
         switch terminal {
         case .terminal:
-            if let tty = session.tty, closeTerminalAppTab(tty: tty) { return }
+            if let tty = session.tty, closeTerminalAppTab(tty: tty) { return true }
         case .iterm:
-            if let tty = session.tty, closeITermSession(tty: tty) { return }
+            if let tty = session.tty, closeITermSession(tty: tty) { return true }
         case .ghostty:
-            if closeAXWindow(for: .ghostty, session: session) { return }
+            if closeAXWindow(for: .ghostty, session: session) { return true }
         case .warp, .wezterm, .kitty, .alacritty:
-            if let terminal, closeAXWindow(for: terminal, session: session) { return }
+            if let terminal, closeAXWindow(for: terminal, session: session) { return true }
         case .none:
             break
         }
+
+        return false
+    }
+
+    private static func verifiedProcessGroupID(for pid: Int) -> pid_t? {
+        let processID = pid_t(pid)
+        guard processID > 1, kill(processID, 0) == 0 || errno != ESRCH else { return nil }
+
+        let processGroupID = getpgid(processID)
+        guard processGroupID > 1,
+              processGroupID == processID,
+              processGroupID != getpgrp() else {
+            return nil
+        }
+
+        return processGroupID
     }
 
     // MARK: - Accessibility close
@@ -71,7 +91,9 @@ enum TerminalCloseService {
         // Try to find and press the close button
         var closeButtonValue: CFTypeRef?
         if AXUIElementCopyAttributeValue(match.window, kAXCloseButtonAttribute as CFString, &closeButtonValue) == .success,
-           let closeButton = closeButtonValue as! AXUIElement? {
+           let closeButtonValue,
+           CFGetTypeID(closeButtonValue) == AXUIElementGetTypeID() {
+            let closeButton = closeButtonValue as! AXUIElement
             let result = AXUIElementPerformAction(closeButton, kAXPressAction as CFString)
             if result == .success { return true }
         }
@@ -107,7 +129,7 @@ enum TerminalCloseService {
             repeat with t in tabs of w
               try
                 if (tty of t as string) is equal to "\(escaped)" then
-                  close w
+                  close t
                   return true
                 end if
               end try

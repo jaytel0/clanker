@@ -24,6 +24,11 @@ let package = Package(
             // script copies that bundle into `$APP_CONTENTS/Resources/` so
             // resources work in the packaged .app, not just `swift run`.
             resources: [.process("Resources")]
+        ),
+        .testTarget(
+            name: "ClankerTests",
+            dependencies: ["Clanker"],
+            path: "Tests/ClankerTests"
         )
     ]
 )

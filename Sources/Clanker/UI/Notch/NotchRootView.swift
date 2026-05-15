@@ -225,7 +225,7 @@ private struct ExpandedContent: View {
                             group: group,
                             edgeInset: Self.edgeInset,
                             onActivate: { viewModel.activate($0) },
-                            onClose: { viewModel.closeSession($0) }
+                            onClose: { viewModel.closeSession($0, allowProcessTermination: $1) }
                         )
                     }
                 }
@@ -798,7 +798,7 @@ private struct SessionGroupView: View {
     let group: SessionGroup
     let edgeInset: CGFloat
     let onActivate: (AgentSession) -> Void
-    let onClose: (AgentSession) -> Void
+    let onClose: (AgentSession, Bool) -> Void
 
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
@@ -807,7 +807,12 @@ private struct SessionGroupView: View {
 
             VStack(spacing: 2) {
                 ForEach(group.sessions) { session in
-                    SessionRow(session: session, groupCwd: group.sessions.first?.cwd, onActivate: { onActivate(session) }, onClose: { onClose(session) })
+                    SessionRow(
+                        session: session,
+                        groupCwd: group.sessions.first?.cwd,
+                        onActivate: { onActivate(session) },
+                        onClose: { allowTermination in onClose(session, allowTermination) }
+                    )
                         .padding(.horizontal, edgeInset)
                         .transition(.opacity.combined(with: .offset(y: 4)))
                 }
@@ -904,17 +909,49 @@ private struct SessionRow: View {
     /// to avoid repeating what the group header already states.
     var groupCwd: String? = nil
     let onActivate: () -> Void
-    var onClose: () -> Void = {}
+    var onClose: (Bool) -> Void = { _ in }
 
     @State private var hovering = false
+    @State private var showingCloseConfirmation = false
 
     var body: some View {
-        Button(action: onActivate) {
-            rowContent
+        HStack(spacing: 8) {
+            Button(action: onActivate) {
+                primaryContent
+            }
+            .buttonStyle(.plain)
+            .help(focusHelp)
+
+            if (hovering || showingCloseConfirmation), session.closeCapability.canClose {
+                SessionCloseButton(
+                    capability: session.closeCapability,
+                    action: handleCloseTap
+                )
+                .padding(.trailing, 8)
+                .transition(.opacity)
+            }
         }
-        .buttonStyle(SessionRowButtonStyle(needsAttention: session.needsAttention, hovering: hovering))
+        .background(rowBackground)
+        .overlay(alignment: .leading) {
+            if session.needsAttention {
+                Capsule(style: .continuous)
+                    .fill(NotchPalette.attention)
+                    .frame(width: 2.5)
+                    .padding(.vertical, 9)
+                    .shadow(color: NotchPalette.attention.opacity(0.7), radius: 4)
+            }
+        }
+        .scaleEffect(hovering ? 1.012 : 1.0)
         .onHover { hovering = $0 }
-        .help(focusHelp)
+        .alert("Terminate process group?", isPresented: $showingCloseConfirmation) {
+            Button("Cancel", role: .cancel) {}
+            Button("Terminate", role: .destructive) {
+                onClose(true)
+            }
+        } message: {
+            Text("Clanker could not close this through a terminal tab. Terminating sends SIGTERM to the owned process group.")
+        }
+        .animation(NotchMotion.hover, value: hovering)
     }
 
     private var showCwd: Bool {
@@ -922,7 +959,7 @@ private struct SessionRow: View {
         return session.cwd != groupCwd
     }
 
-    private var rowContent: some View {
+    private var primaryContent: some View {
         HStack(spacing: 9) {
             HarnessIcon(harness: session.harness, size: 22)
 
@@ -945,12 +982,8 @@ private struct SessionRow: View {
             Spacer(minLength: 8)
 
             CompactStatus(status: session.status, lastActivity: session.lastActivity)
-
-            if hovering {
-                SessionCloseButton(action: onClose)
-                    .transition(.opacity)
-            }
         }
+        .frame(maxWidth: .infinity, alignment: .leading)
         .padding(.horizontal, 10)
         .padding(.vertical, 6)
         .contentShape(Rectangle())
@@ -962,9 +995,47 @@ private struct SessionRow: View {
         }
         return "Focus terminal"
     }
+
+    private var rowBackground: some View {
+        let shape = RoundedRectangle(cornerRadius: 9, style: .continuous)
+        let baseOpacity: Double = {
+            if session.needsAttention { return 0.085 }
+            if hovering { return 0.07 }
+            return 0.045
+        }()
+
+        return ZStack {
+            shape.fill(.white.opacity(baseOpacity))
+
+            if session.needsAttention {
+                shape
+                    .fill(
+                        LinearGradient(
+                            colors: [
+                                NotchPalette.attention.opacity(0.10),
+                                NotchPalette.attention.opacity(0.0)
+                            ],
+                            startPoint: .leading,
+                            endPoint: .trailing
+                        )
+                    )
+            }
+
+            shape.stroke(.white.opacity(0.05), lineWidth: 0.5)
+        }
+    }
+
+    private func handleCloseTap() {
+        if session.closeCapability.requiresConfirmation {
+            showingCloseConfirmation = true
+        } else {
+            onClose(false)
+        }
+    }
 }
 
 private struct SessionCloseButton: View {
+    let capability: SessionCloseCapability
     let action: () -> Void
     @State private var hovering = false
 
@@ -982,7 +1053,7 @@ private struct SessionCloseButton: View {
         }
         .buttonStyle(.plain)
         .onHover { hovering = $0 }
-        .help("Close session")
+        .help(capability.helpTitle)
         .animation(NotchMotion.hover, value: hovering)
     }
 }
@@ -1210,63 +1281,6 @@ private struct SpendSourceBadge: View {
         case .estimated: NotchPalette.spend
         case .quotaOnly: NotchPalette.completed
         case .unknown: NotchPalette.idle
-        }
-    }
-}
-
-// MARK: - Row button style
-
-/// Owns press/hover visuals so the underlying `Button` can drive activation
-/// reliably (no fighting with the parent `ScrollView`'s drag gesture).
-private struct SessionRowButtonStyle: ButtonStyle {
-    let needsAttention: Bool
-    let hovering: Bool
-
-    func makeBody(configuration: Configuration) -> some View {
-        configuration.label
-            .background(background(pressed: configuration.isPressed))
-            .overlay(alignment: .leading) {
-                if needsAttention {
-                    Capsule(style: .continuous)
-                        .fill(NotchPalette.attention)
-                        .frame(width: 2.5)
-                        .padding(.vertical, 9)
-                        .shadow(color: NotchPalette.attention.opacity(0.7), radius: 4)
-                }
-            }
-            .scaleEffect(configuration.isPressed ? 0.97 : (hovering ? 1.012 : 1.0))
-            .animation(NotchMotion.hover, value: hovering)
-            .animation(.spring(response: 0.22, dampingFraction: 0.72), value: configuration.isPressed)
-    }
-
-    @ViewBuilder
-    private func background(pressed: Bool) -> some View {
-        let shape = RoundedRectangle(cornerRadius: 9, style: .continuous)
-        let baseOpacity: Double = {
-            if pressed { return 0.13 }
-            if needsAttention { return 0.085 }
-            if hovering { return 0.07 }
-            return 0.045
-        }()
-
-        ZStack {
-            shape.fill(.white.opacity(baseOpacity))
-
-            if needsAttention {
-                shape
-                    .fill(
-                        LinearGradient(
-                            colors: [
-                                NotchPalette.attention.opacity(0.10),
-                                NotchPalette.attention.opacity(0.0)
-                            ],
-                            startPoint: .leading,
-                            endPoint: .trailing
-                        )
-                    )
-            }
-
-            shape.stroke(.white.opacity(0.05), lineWidth: 0.5)
         }
     }
 }

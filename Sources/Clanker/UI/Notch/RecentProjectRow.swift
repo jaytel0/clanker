@@ -16,15 +16,32 @@ struct RecentProjectRow: View {
     @State private var hovering = false
 
     var body: some View {
-        Button(action: onPrimary) {
-            content
+        HStack(spacing: 8) {
+            Button(action: onPrimary) {
+                primaryContent
+            }
+            .buttonStyle(.plain)
+            .help("Open \(project.name) in \(TerminalLauncher.preferredDisplayName)")
+
+            actionCluster
+                .padding(.trailing, 8)
         }
-        .buttonStyle(RecentRowButtonStyle(hovering: hovering, hasActiveSession: project.hasActiveSession))
+        .background(rowBackground)
+        .overlay(alignment: .leading) {
+            if project.hasActiveSession {
+                Capsule(style: .continuous)
+                    .fill(NotchPalette.active)
+                    .frame(width: 2.5)
+                    .padding(.vertical, 9)
+                    .shadow(color: NotchPalette.active.opacity(0.6), radius: 4)
+            }
+        }
+        .scaleEffect(hovering ? 1.012 : 1.0)
         .onHover { hovering = $0 }
-        .help("Open \(project.name) in \(TerminalLauncher.preferredDisplayName)")
+        .animation(NotchMotion.hover, value: hovering)
     }
 
-    private var content: some View {
+    private var primaryContent: some View {
         HStack(spacing: 9) {
             ProjectGlyph(hasActiveSession: project.hasActiveSession)
 
@@ -49,12 +66,11 @@ struct RecentProjectRow: View {
             }
 
             Spacer(minLength: 8)
-
-            actionCluster
         }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .contentShape(Rectangle())
         .padding(.horizontal, 10)
         .padding(.vertical, 6)
-        .contentShape(Rectangle())
     }
 
     private var actionCluster: some View {
@@ -80,6 +96,15 @@ struct RecentProjectRow: View {
         }
         .opacity(hovering ? 1.0 : 0.55)
         .animation(NotchMotion.hover, value: hovering)
+    }
+
+    private var rowBackground: some View {
+        let shape = RoundedRectangle(cornerRadius: 9, style: .continuous)
+        let opacity: Double = hovering ? 0.07 : 0.04
+        return ZStack {
+            shape.fill(.white.opacity(opacity))
+            shape.stroke(.white.opacity(0.05), lineWidth: 0.5)
+        }
     }
 
     private func abbreviatePath(_ path: String) -> String {
@@ -168,42 +193,6 @@ private struct RecentActionIconButton<Icon: View>: View {
         .onHover { hovering = $0 && !disabled }
         .help(tooltip)
         .animation(NotchMotion.hover, value: hovering)
-    }
-}
-
-private struct RecentRowButtonStyle: ButtonStyle {
-    let hovering: Bool
-    let hasActiveSession: Bool
-
-    func makeBody(configuration: Configuration) -> some View {
-        configuration.label
-            .background(background(pressed: configuration.isPressed))
-            .overlay(alignment: .leading) {
-                if hasActiveSession {
-                    Capsule(style: .continuous)
-                        .fill(NotchPalette.active)
-                        .frame(width: 2.5)
-                        .padding(.vertical, 9)
-                        .shadow(color: NotchPalette.active.opacity(0.6), radius: 4)
-                }
-            }
-            .scaleEffect(configuration.isPressed ? 0.97 : (hovering ? 1.012 : 1.0))
-            .animation(NotchMotion.hover, value: hovering)
-            .animation(.spring(response: 0.22, dampingFraction: 0.72), value: configuration.isPressed)
-    }
-
-    @ViewBuilder
-    private func background(pressed: Bool) -> some View {
-        let shape = RoundedRectangle(cornerRadius: 9, style: .continuous)
-        let opacity: Double = {
-            if pressed { return 0.13 }
-            if hovering { return 0.07 }
-            return 0.04
-        }()
-        ZStack {
-            shape.fill(.white.opacity(opacity))
-            shape.stroke(.white.opacity(0.05), lineWidth: 0.5)
-        }
     }
 }
 

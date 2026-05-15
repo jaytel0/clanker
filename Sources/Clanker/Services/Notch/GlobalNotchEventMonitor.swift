@@ -49,11 +49,11 @@ final class GlobalNotchEventMonitor {
         }
         downMonitor?.start()
 
-        // Global monitor catches keys while other apps are focused (which is
-        // almost always, since we're a non-activating panel). Global monitors
-        // are observe-only (can't swallow), but 1/2 are harmless to pass through.
-        keyMonitor = NSEvent.addGlobalMonitorForEvents(matching: .keyDown) { [weak self] event in
-            self?.handleKeyDown(event)
+        keyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
+            if self?.handleKeyDown(event) == true {
+                return nil
+            }
+            return event
         }
     }
 
@@ -116,7 +116,13 @@ final class GlobalNotchEventMonitor {
 
     @discardableResult
     private func handleKeyDown(_ event: NSEvent) -> Bool {
-        guard let viewModel, viewModel.isExpanded, event.modifierFlags.intersection(.deviceIndependentFlagsMask) == [] else { return false }
+        guard let viewModel,
+              let window,
+              viewModel.isExpanded,
+              window.isKeyWindow,
+              event.modifierFlags.intersection(.deviceIndependentFlagsMask) == [] else {
+            return false
+        }
         switch event.charactersIgnoringModifiers {
         case "1":
             viewModel.selectPane(.sessions)
