@@ -158,7 +158,7 @@ final class GitHubUpdateManager: ObservableObject {
         automaticTimer = nil
 
         guard started, automaticChecksEnabled else { return }
-        automaticTimer = Timer.scheduledTimer(withTimeInterval: 60 * 60, repeats: true) { [weak self] _ in
+        automaticTimer = Timer.scheduledTimer(withTimeInterval: 10 * 60, repeats: true) { [weak self] _ in
             Task { @MainActor [weak self] in
                 await self?.checkIfDue()
             }

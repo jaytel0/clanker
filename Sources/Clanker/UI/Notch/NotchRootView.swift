@@ -395,6 +395,7 @@ private struct ExpandedHeader: View {
                 if viewModel.updateManager.availableUpdate != nil || viewModel.updateManager.state.isBusy {
                     UpdatePill(updateManager: viewModel.updateManager)
                 }
+                DisplayLockButton()
                 SettingsCogButton(
                     updateManager: viewModel.updateManager,
                     onShowOnboarding: viewModel.onShowOnboarding ?? {}
@@ -486,6 +487,122 @@ private struct UpdatePill: View {
     }
 }
 
+// MARK: - Display lock
+
+private struct DisplayLockButton: View {
+    @ObservedObject private var settings = NotchDisplaySettings.shared
+    @State private var hovering = false
+    @State private var isPopoverPresented = false
+
+    var body: some View {
+        Button {
+            isPopoverPresented.toggle()
+        } label: {
+            ZStack {
+                Circle()
+                    .fill(.white.opacity(hovering || !settings.isFollowingActiveDisplay ? 0.16 : 0.08))
+                    .overlay(
+                        Circle()
+                            .stroke(.white.opacity(hovering || !settings.isFollowingActiveDisplay ? 0.18 : 0.10), lineWidth: 0.5)
+                    )
+
+                Image(systemName: settings.isFollowingActiveDisplay ? "display" : "display")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(.white.opacity(hovering || !settings.isFollowingActiveDisplay ? 0.95 : 0.78))
+            }
+            .frame(width: 25, height: 25)
+            .contentShape(Circle())
+        }
+        .buttonStyle(.plain)
+        .help(helpText)
+        .onHover { hovering = $0 }
+        .popover(isPresented: $isPopoverPresented, arrowEdge: .top) {
+            DisplayLockPopover(
+                settings: settings,
+                onDismiss: { isPopoverPresented = false }
+            )
+        }
+        .animation(NotchMotion.hover, value: hovering)
+        .animation(NotchMotion.hover, value: settings.isFollowingActiveDisplay)
+    }
+
+    private var helpText: String {
+        if settings.isFollowingActiveDisplay {
+            return "Following active display"
+        }
+        if let name = settings.lockedDisplayName {
+            return "Locked to \(name)"
+        }
+        return "Locked to display"
+    }
+}
+
+private struct DisplayLockPopover: View {
+    @ObservedObject var settings: NotchDisplaySettings
+    let onDismiss: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text("Notch Display")
+                .font(.system(size: 12, weight: .semibold))
+                .padding(.bottom, 2)
+
+            Button {
+                settings.followActiveDisplay()
+                onDismiss()
+            } label: {
+                displayOptionLabel(
+                    title: "Follow Active Display",
+                    systemImage: "arrow.triangle.2.circlepath",
+                    isSelected: settings.isFollowingActiveDisplay
+                )
+            }
+            .buttonStyle(.plain)
+
+            if settings.availableDisplays.count > 1 {
+                Divider()
+
+                ForEach(settings.availableDisplays) { display in
+                    Button {
+                        settings.lock(to: display.id)
+                        onDismiss()
+                    } label: {
+                        displayOptionLabel(
+                            title: display.name,
+                            systemImage: display.iconName,
+                            isSelected: settings.lockedDisplayID == display.id
+                        )
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+        }
+        .padding(12)
+        .frame(width: 210, alignment: .leading)
+    }
+
+    private func displayOptionLabel(title: String, systemImage: String, isSelected: Bool) -> some View {
+        HStack(spacing: 8) {
+            Image(systemName: isSelected ? "checkmark" : systemImage)
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundStyle(isSelected ? NotchPalette.active : .secondary)
+                .frame(width: 16)
+
+            Text(title)
+                .font(.system(size: 12, weight: .medium))
+                .foregroundStyle(.primary)
+                .lineLimit(1)
+
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, 8)
+        .padding(.vertical, 5)
+        .contentShape(Rectangle())
+    }
+}
+
+// MARK: - Settings cog
+
 private struct SettingsCogButton: View {
     @ObservedObject var updateManager: GitHubUpdateManager
     let onShowOnboarding: () -> Void
@@ -511,20 +628,30 @@ private struct SettingsCogButton: View {
                 Label("Quit Clanker", systemImage: "power")
             }
         } label: {
-            ZStack {
-                Circle()
-                    .fill(.white.opacity(hovering ? 0.16 : 0.08))
-                    .overlay(
-                        Circle()
-                            .stroke(.white.opacity(hovering ? 0.18 : 0.10), lineWidth: 0.5)
-                    )
+            ZStack(alignment: .topTrailing) {
+                ZStack {
+                    Circle()
+                        .fill(.white.opacity(hovering ? 0.16 : 0.08))
+                        .overlay(
+                            Circle()
+                                .stroke(.white.opacity(hovering ? 0.18 : 0.10), lineWidth: 0.5)
+                        )
 
-                Image(systemName: "gearshape.fill")
-                    .font(.system(size: 12.5, weight: .semibold))
-                    .symbolRenderingMode(.monochrome)
-                    .foregroundColor(.white.opacity(hovering ? 0.95 : 0.78))
+                    Image(systemName: "gearshape.fill")
+                        .font(.system(size: 12.5, weight: .semibold))
+                        .symbolRenderingMode(.monochrome)
+                        .foregroundColor(.white.opacity(hovering ? 0.95 : 0.78))
+                }
+                .frame(width: 25, height: 25)
+
+                if updateManager.availableUpdate != nil {
+                    Circle()
+                        .fill(NotchPalette.update)
+                        .frame(width: 6, height: 6)
+                        .shadow(color: NotchPalette.update.opacity(0.7), radius: 3)
+                        .offset(x: 1, y: -1)
+                }
             }
-            .frame(width: 25, height: 25)
             .contentShape(Circle())
         }
         .colorScheme(.dark)

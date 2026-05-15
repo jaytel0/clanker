@@ -1,5 +1,6 @@
 import AppKit
 import ApplicationServices
+import Combine
 import SwiftUI
 
 @main
@@ -18,11 +19,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private let sessionStore = LocalSessionStore()
     private lazy var recentsStore = RecentProjectsStore(sessionStore: sessionStore)
     let updateManager = GitHubUpdateManager.shared
+    private let displaySettings = NotchDisplaySettings.shared
     private var notchController: NotchWindowController?
     private var notchViewModel: NotchViewModel?
     private var onboardingController: OnboardingWindowController?
     private var screenObservers: [NSObjectProtocol] = []
     private var screenPollTimer: Timer?
+    private var cancellables = Set<AnyCancellable>()
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         if CommandLine.arguments.contains("--print-sessions") {
@@ -68,7 +71,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func showNotch() {
-        guard notchController == nil, let screen = NSScreen.main else { return }
+        guard notchController == nil,
+              let screen = displaySettings.preferredScreen(active: NSScreen.main) else { return }
         let viewModel = NotchViewModel(
             sessionStore: sessionStore,
             recentsStore: recentsStore,
@@ -80,10 +84,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         notchViewModel = viewModel
         let controller = NotchWindowController(screen: screen, viewModel: viewModel)
         controller.showWindow(nil)
+        displaySettings.noteCurrentScreen(screen)
         notchController = controller
     }
 
-    /// Keep the notch glued to the display the user is currently working on.
+    /// Keep the notch on the correct display: either following the display the
+    /// user is currently working on, or pinned to the user's locked display.
     ///
     /// Three signals — belt and suspenders since none alone covers every
     /// transition (lid open/close, display hot-plug, app focus jumping to
@@ -105,7 +111,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 queue: .main
             ) { [weak self] _ in
                 MainActor.assumeIsolated {
-                    self?.followActiveScreen()
+                    self?.updateNotchDisplayPlacement()
                 }
             }
         )
@@ -117,7 +123,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 queue: .main
             ) { [weak self] _ in
                 MainActor.assumeIsolated {
-                    self?.followActiveScreen()
+                    self?.updateNotchDisplayPlacement()
                 }
             }
         )
@@ -129,21 +135,32 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 queue: .main
             ) { [weak self] _ in
                 MainActor.assumeIsolated {
-                    self?.followActiveScreen()
+                    self?.updateNotchDisplayPlacement()
                 }
             }
         )
 
         screenPollTimer = Timer.scheduledTimer(withTimeInterval: 2.0, repeats: true) { [weak self] _ in
             Task { @MainActor in
-                self?.followActiveScreen()
+                self?.updateNotchDisplayPlacement()
             }
         }
+
+        displaySettings.$mode
+            .dropFirst()
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] _ in
+                self?.updateNotchDisplayPlacement()
+            }
+            .store(in: &cancellables)
     }
 
-    private func followActiveScreen() {
-        guard let controller = notchController, let screen = NSScreen.main else { return }
+    private func updateNotchDisplayPlacement() {
+        displaySettings.refreshDisplays()
+        guard let controller = notchController,
+              let screen = displaySettings.preferredScreen(active: NSScreen.main) else { return }
         controller.moveToScreen(screen)
+        displaySettings.noteCurrentScreen(screen)
     }
 
     /// Ask for Accessibility permission at launch so the first precise focus
