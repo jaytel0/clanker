@@ -7,16 +7,28 @@ final class NotchWindowController: NSWindowController {
     /// Maximum panel canvas. The notch silhouette animates inside this canvas
     /// in pure SwiftUI — the AppKit window itself never resizes, which is what
     /// makes the morph buttery smooth.
-    static let canvasWidth: CGFloat = 620
+    static let canvasWidth: CGFloat = 740
     static let canvasHeight: CGFloat = 460
 
     /// Closed-state notch dimensions.
-    static let closedWidth: CGFloat = 248
+    ///
+    /// The physical MacBook notch is ~230 pt wide. We extend ~70 pt past it on
+    /// each side so the harness icons and attention badge sit clear of the
+    /// hardware silhouette instead of being eclipsed by it.
+    static let closedWidth: CGFloat = 372
     static let closedHeight: CGFloat = 32
 
     /// Expanded-state notch dimensions.
-    static let expandedWidth: CGFloat = 580
+    static let expandedWidth: CGFloat = 660
     static let expandedHeight: CGFloat = 380
+
+    // Shared corner radii. Used by NotchRootView for rendering and by the
+    // hit-test path below — keep them in lockstep so clicks land on exactly
+    // the visible silhouette.
+    static let closedTopRadius: CGFloat = 8
+    static let closedBottomRadius: CGFloat = 12
+    static let expandedTopRadius: CGFloat = 14
+    static let expandedBottomRadius: CGFloat = 26
 
     private let screen: NSScreen
     private let viewModel: NotchViewModel
@@ -34,25 +46,15 @@ final class NotchWindowController: NSWindowController {
         hostingView.frame = NSRect(origin: .zero, size: frame.size)
         hostingView.autoresizingMask = [.width, .height]
 
-        // Hit-test only the visible notch silhouette so menu-bar clicks pass
-        // through everywhere else.
+        // Hit-test against the *actual visible notch silhouette*. Anything
+        // outside the curved shape — the corners of the bounding rect, the
+        // empty space below the closed pill, the menu bar to either side —
+        // returns nil so the click falls through to the menu bar / window
+        // beneath us. Without this the rectangular bounding box would silently
+        // eat clicks in regions where there's no UI painted at all.
         hostingView.hitTestProvider = { [weak viewModel] point in
             guard let viewModel else { return false }
-            let canvasSize = NSSize(width: Self.canvasWidth, height: Self.canvasHeight)
-            let interactiveSize = viewModel.isExpanded
-                ? NSSize(width: Self.expandedWidth, height: Self.expandedHeight)
-                : NSSize(width: Self.closedWidth, height: Self.closedHeight)
-            // The notch sits flush with the top of the canvas, horizontally
-            // centered. AppKit windows are bottom-up so "top" is maxY.
-            let originX = (canvasSize.width - interactiveSize.width) / 2
-            let originY = canvasSize.height - interactiveSize.height
-            let interactiveRect = NSRect(
-                x: originX,
-                y: originY,
-                width: interactiveSize.width,
-                height: interactiveSize.height
-            )
-            return interactiveRect.contains(point)
+            return Self.notchShapeContains(point, isExpanded: viewModel.isExpanded)
         }
 
         let controller = NSViewController()
@@ -79,5 +81,33 @@ final class NotchWindowController: NSWindowController {
             width: canvasWidth,
             height: canvasHeight
         )
+    }
+
+    /// Returns `true` only when `point` (in AppKit window-local coordinates,
+    /// origin at bottom-left) lies inside the painted notch shape for the
+    /// given expand state.
+    static func notchShapeContains(_ point: NSPoint, isExpanded: Bool) -> Bool {
+        let shapeWidth = isExpanded ? expandedWidth : closedWidth
+        let shapeHeight = isExpanded ? expandedHeight : closedHeight
+        let topRadius = isExpanded ? expandedTopRadius : closedTopRadius
+        let bottomRadius = isExpanded ? expandedBottomRadius : closedBottomRadius
+
+        // Shape is centered horizontally and pinned to the top of the canvas.
+        let originX = (canvasWidth - shapeWidth) / 2
+
+        // Flip Y: AppKit window y=0 is bottom; the shape's path uses y=0 at
+        // the top.
+        let localX = point.x - originX
+        let localY = canvasHeight - point.y
+
+        // Cheap bounding-box reject before the path containment check.
+        guard localX >= 0, localX <= shapeWidth,
+              localY >= 0, localY <= shapeHeight else {
+            return false
+        }
+
+        let path = NotchShape(topRadius: topRadius, bottomRadius: bottomRadius)
+            .path(in: CGRect(x: 0, y: 0, width: shapeWidth, height: shapeHeight))
+        return path.contains(CGPoint(x: localX, y: localY))
     }
 }

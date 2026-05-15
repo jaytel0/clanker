@@ -34,8 +34,12 @@ struct NotchRootView: View {
     }
 
     private var notch: some View {
-        let topRadius: CGFloat = viewModel.isExpanded ? 14 : 8
-        let bottomRadius: CGFloat = viewModel.isExpanded ? 26 : 12
+        let topRadius: CGFloat = viewModel.isExpanded
+            ? NotchWindowController.expandedTopRadius
+            : NotchWindowController.closedTopRadius
+        let bottomRadius: CGFloat = viewModel.isExpanded
+            ? NotchWindowController.expandedBottomRadius
+            : NotchWindowController.closedBottomRadius
 
         return ZStack {
             NotchShell(topRadius: topRadius, bottomRadius: bottomRadius)
