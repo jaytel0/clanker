@@ -17,6 +17,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private let sessionStore = LocalSessionStore()
     private lazy var recentsStore = RecentProjectsStore(sessionStore: sessionStore)
     private var notchController: NotchWindowController?
+    private var notchViewModel: NotchViewModel?
     private var onboardingController: OnboardingWindowController?
     private var screenObservers: [NSObjectProtocol] = []
     private var screenPollTimer: Timer?
@@ -49,12 +50,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
-    private func showOnboarding() {
+    private func showOnboarding(fromSettings: Bool = false) {
         let controller = OnboardingWindowController()
         controller.onFinish = { [weak self] _ in
             self?.onboardingController = nil
-            self?.showNotch()
-            self?.installScreenObservers()
+            if !fromSettings {
+                self?.showNotch()
+                self?.installScreenObservers()
+            }
         }
         controller.present()
         onboardingController = controller
@@ -66,6 +69,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             sessionStore: sessionStore,
             recentsStore: recentsStore
         )
+        viewModel.onShowOnboarding = { [weak self] in
+            self?.showOnboarding(fromSettings: true)
+        }
+        notchViewModel = viewModel
         let controller = NotchWindowController(screen: screen, viewModel: viewModel)
         controller.showWindow(nil)
         notchController = controller

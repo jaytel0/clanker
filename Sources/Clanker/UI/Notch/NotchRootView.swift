@@ -180,6 +180,7 @@ private struct ExpandedContent: View {
                 sessionsCount: viewModel.sessions.count,
                 recentsCount: viewModel.recents.count,
                 attentionCount: viewModel.attentionCount,
+                activeCount: viewModel.activeCount,
                 onSelect: { viewModel.selectPane($0) }
             )
             .padding(.horizontal, Self.edgeInset)
@@ -280,6 +281,7 @@ private struct PaneTabBar: View {
     let sessionsCount: Int
     let recentsCount: Int
     let attentionCount: Int
+    let activeCount: Int
     let onSelect: (NotchPane) -> Void
 
     var body: some View {
@@ -295,6 +297,15 @@ private struct PaneTabBar: View {
                 count: recentsCount
             )
             Spacer(minLength: 0)
+            if activeCount > 0 {
+                HeaderPill(
+                    text: "\(activeCount) active",
+                    tint: NotchPalette.active,
+                    leadingDot: true
+                )
+                .transition(.scale.combined(with: .opacity))
+                .animation(NotchMotion.content, value: activeCount)
+            }
         }
     }
 
@@ -398,11 +409,7 @@ private struct ExpandedHeader: View {
                         leadingDot: true
                     )
                 }
-                HeaderPill(
-                    text: "\(viewModel.activeCount) active",
-                    tint: NotchPalette.active,
-                    leadingDot: viewModel.activeCount > 0
-                )
+                SettingsCogButton(onShowOnboarding: viewModel.onShowOnboarding ?? {})
             }
         }
     }
@@ -443,6 +450,42 @@ private struct HeaderPill: View {
                         .stroke(tint.opacity(0.32), lineWidth: 0.5)
                 )
         }
+    }
+}
+
+// MARK: - Settings cog
+
+private struct SettingsCogButton: View {
+    let onShowOnboarding: () -> Void
+    @State private var hovering = false
+
+    var body: some View {
+        Menu {
+            Button {
+                onShowOnboarding()
+            } label: {
+                Label("Choose Sources…", systemImage: "folder.badge.gearshape")
+            }
+
+            Divider()
+
+            Button(role: .destructive) {
+                NSApp.terminate(nil)
+            } label: {
+                Label("Quit Clanker", systemImage: "power")
+            }
+        } label: {
+            Image(systemName: "gearshape")
+                .font(.system(size: 12, weight: .medium))
+                .foregroundStyle(.white.opacity(hovering ? 0.70 : 0.32))
+                .frame(width: 28, height: 24)
+                .contentShape(Rectangle())
+        }
+        .menuStyle(.borderlessButton)
+        .menuIndicator(.hidden)
+        .fixedSize()
+        .onHover { hovering = $0 }
+        .animation(NotchMotion.hover, value: hovering)
     }
 }
 

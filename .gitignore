@@ -19,6 +19,7 @@ Package.resolved
 
 # App/package outputs
 dist/
+release/
 *.app
 *.dmg
 *.pkg

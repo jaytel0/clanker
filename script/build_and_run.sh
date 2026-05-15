@@ -5,8 +5,10 @@ MODE="${1:-run}"
 APP_NAME="Clanker"
 BUNDLE_ID="dev.clanker.app"
 MIN_SYSTEM_VERSION="14.0"
+SIGN_IDENTITY="Developer ID Application: Jaytel Provence (N6S323FR6Q)"
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+VERSION="$(cat "$ROOT_DIR/VERSION" | tr -d '[:space:]')"
 DIST_DIR="$ROOT_DIR/dist"
 APP_BUNDLE="$DIST_DIR/$APP_NAME.app"
 INSTALL_BUNDLE="/Applications/$APP_NAME.app"
@@ -18,8 +20,15 @@ INFO_PLIST="$APP_CONTENTS/Info.plist"
 pkill -x "$APP_NAME" >/dev/null 2>&1 || true
 pkill -f "codex app-server --listen ws://127.0.0.1:41241" >/dev/null 2>&1 || true
 
-swift build --package-path "$ROOT_DIR"
-BUILD_BIN_DIR="$(swift build --package-path "$ROOT_DIR" --show-bin-path)"
+# Release for install/release modes, debug otherwise
+if [[ "$MODE" == "--install" || "$MODE" == "install" || "$MODE" == "--release" || "$MODE" == "release" ]]; then
+  BUILD_FLAGS="-c release"
+else
+  BUILD_FLAGS=""
+fi
+
+swift build --package-path "$ROOT_DIR" $BUILD_FLAGS
+BUILD_BIN_DIR="$(swift build --package-path "$ROOT_DIR" $BUILD_FLAGS --show-bin-path)"
 BUILD_BINARY="$BUILD_BIN_DIR/$APP_NAME"
 
 rm -rf "$APP_BUNDLE"
@@ -54,6 +63,10 @@ cat >"$INFO_PLIST" <<PLIST
   <string>$BUNDLE_ID</string>
   <key>CFBundleName</key>
   <string>$APP_NAME</string>
+  <key>CFBundleShortVersionString</key>
+  <string>$VERSION</string>
+  <key>CFBundleVersion</key>
+  <string>$VERSION</string>
   <key>CFBundlePackageType</key>
   <string>APPL</string>
   <key>LSMinimumSystemVersion</key>
@@ -71,6 +84,15 @@ cat >"$INFO_PLIST" <<PLIST
 </dict>
 </plist>
 PLIST
+
+# Sign the bundle so macOS can track Accessibility permissions by signing
+# identity rather than binary hash. Without this, permissions are revoked
+# on every rebuild because the binary hash changes.
+if security find-identity -v -p codesigning 2>/dev/null | grep -qF "$SIGN_IDENTITY"; then
+  codesign --force --deep --sign "$SIGN_IDENTITY" "$APP_BUNDLE"
+else
+  echo "⚠️  Signing identity not found — skipping codesign (Accessibility prompts may recur)"
+fi
 
 open_app() {
   /usr/bin/open -n "$APP_BUNDLE"
@@ -99,12 +121,30 @@ case "$MODE" in
   --install|install)
     rm -rf "$INSTALL_BUNDLE"
     cp -R "$APP_BUNDLE" "$INSTALL_BUNDLE"
+    # Re-sign at the installed path (codesign is path-sensitive)
+    if security find-identity -v -p codesigning 2>/dev/null | grep -qF "$SIGN_IDENTITY"; then
+      codesign --force --deep --sign "$SIGN_IDENTITY" "$INSTALL_BUNDLE"
+    fi
     /usr/bin/open -n "$INSTALL_BUNDLE"
     sleep 1
     pgrep -x "$APP_NAME" >/dev/null
     ;;
+  --release|release)
+    RELEASE_DIR="$ROOT_DIR/release"
+    mkdir -p "$RELEASE_DIR"
+    RELEASE_APP="$RELEASE_DIR/$APP_NAME.app"
+    rm -rf "$RELEASE_APP"
+    cp -R "$APP_BUNDLE" "$RELEASE_APP"
+    if security find-identity -v -p codesigning 2>/dev/null | grep -qF "$SIGN_IDENTITY"; then
+      codesign --force --deep --sign "$SIGN_IDENTITY" "$RELEASE_APP"
+    fi
+    # Create a zip for distribution
+    cd "$RELEASE_DIR"
+    zip -r "$APP_NAME-$VERSION.zip" "$APP_NAME.app"
+    echo "✅  Release built: $RELEASE_DIR/$APP_NAME-$VERSION.zip"
+    ;;
   *)
-    echo "usage: $0 [run|--debug|--logs|--telemetry|--verify|--install]" >&2
+    echo "usage: $0 [run|install|release|--debug|--logs|--telemetry|--verify]" >&2
     exit 2
     ;;
 esac

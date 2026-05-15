@@ -34,6 +34,10 @@ final class NotchViewModel: ObservableObject {
     private var hoverOpenTask: Task<Void, Never>?
     private var hoverCloseTask: Task<Void, Never>?
 
+    /// Filled in by `AppDelegate` so the settings menu can trigger the
+    /// onboarding flow without the view layer knowing about AppKit windows.
+    var onShowOnboarding: (() -> Void)?
+
     init(
         sessionStore: LocalSessionStore,
         recentsStore: RecentProjectsStore? = nil

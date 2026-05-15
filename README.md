@@ -1,24 +1,59 @@
-# Clanker
+<p align="center">
+  <img src="Sources/Clanker/Resources/AppIcon.icns" width="128" height="128" alt="Clanker icon">
+</p>
 
-Local-first macOS dynamic-notch app concept for monitoring coding-agent sessions across Codex, Claude Code, Pi, terminals, and related harnesses.
+<h1 align="center">Clanker</h1>
 
-The build contract lives in [spec.md](./spec.md). It defines the product scope, reuse strategy, data model, bridge protocol, harness adapters, notch UI behavior, installation model, and acceptance criteria.
+<p align="center">
+  A dynamic-notch app for macOS that surfaces your coding-agent sessions and recent projects right in the notch.
+</p>
 
-Current state:
+<p align="center">
+  <img src="https://img.shields.io/badge/macOS-14%2B-black?style=flat-square" />
+  <img src="https://img.shields.io/badge/version-0.1.0-black?style=flat-square" />
+  <img src="https://img.shields.io/badge/Swift-6-orange?style=flat-square" />
+</p>
 
-- Specification complete enough to build against.
-- SwiftPM macOS scaffold exists.
-- `script/build_and_run.sh` builds and stages `dist/Clanker.app`.
-- The app launches the dynamic-notch shell and discovers local terminal, Codex, Claude Code, and Pi sessions from live processes, Codex app-server, and local transcript/session files.
+---
 
-Run locally:
+## What it does
+
+Clanker lives in your MacBook's notch. Hover to expand — see every running agent session and recently visited project at a glance, then click to jump straight to it.
+
+- **Sessions** — tracks Codex, Claude, Pi, and bare terminal sessions automatically
+- **Recents** — surfaces your most recently visited git repos from your project roots
+- **Focus** — click any session to raise the exact terminal window
+
+## Install
+
+### Download
+
+Download the latest release from the [Releases](https://github.com/jaytel0/farm/releases) page and move `Clanker.app` to your `/Applications` folder.
+
+> **First launch:** macOS may ask you to grant Accessibility access so Clanker can raise terminal windows. This is a one-time prompt.
+
+### Build from source
+
+Requires Xcode 16+ / Swift 6.
 
 ```bash
-./script/build_and_run.sh
+git clone https://github.com/jaytel0/farm.git clanker
+cd clanker
+bash script/build_and_run.sh install
 ```
 
-Install locally:
+## Usage
 
-```bash
-./script/build_and_run.sh --install
-```
+- **Hover** the notch to expand the panel
+- **Click** any session row to bring that terminal window to the front
+- **⚙** (gear icon, top-right of header) → Choose Sources to change project folders, or Quit
+- **Settings** (⌘,) → Recents tab to manage project roots and the `cd` hook
+
+## Requirements
+
+- macOS 14 Sonoma or later
+- A MacBook with a notch (2021 MacBook Pro or newer)
+
+## License
+
+MIT
