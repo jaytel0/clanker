@@ -904,20 +904,8 @@ private struct SessionRow: View {
             CompactStatus(status: session.status, lastActivity: session.lastActivity)
 
             if hovering {
-                Button(action: onClose) {
-                    Image(systemName: "xmark")
-                        .font(.system(size: 9, weight: .bold))
-                        .foregroundStyle(.white.opacity(0.5))
-                        .frame(width: 18, height: 18)
-                        .background(
-                            Circle()
-                                .fill(.white.opacity(0.08))
-                        )
-                        .contentShape(Circle())
-                }
-                .buttonStyle(.plain)
-                .transition(.opacity)
-                .help("Terminate session")
+                SessionCloseButton(action: onClose)
+                    .transition(.opacity)
             }
         }
         .padding(.horizontal, 10)
@@ -930,6 +918,29 @@ private struct SessionRow: View {
             return "Focus \(terminal)"
         }
         return "Focus terminal"
+    }
+}
+
+private struct SessionCloseButton: View {
+    let action: () -> Void
+    @State private var hovering = false
+
+    var body: some View {
+        Button(action: action) {
+            Image(systemName: "xmark")
+                .font(.system(size: 9, weight: .bold))
+                .foregroundStyle(hovering ? .white : .white.opacity(0.5))
+                .frame(width: 18, height: 18)
+                .background(
+                    Circle()
+                        .fill(hovering ? NotchPalette.error.opacity(0.8) : .white.opacity(0.08))
+                )
+                .contentShape(Circle())
+        }
+        .buttonStyle(.plain)
+        .onHover { hovering = $0 }
+        .help("Close session")
+        .animation(NotchMotion.hover, value: hovering)
     }
 }
 

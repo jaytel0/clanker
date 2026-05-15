@@ -1,0 +1,190 @@
+import AppKit
+import ApplicationServices
+import Darwin
+
+/// Closes the terminal window/tab backing a session.
+///
+/// Strategy:
+///   1. If the session has a tty, use AppleScript (Terminal.app / iTerm2) to
+///      close the specific tab.
+///   2. For Ghostty and other AX-driven terminals, find the matching window
+///      via accessibility and perform AXPress on its close button, or send
+///      Cmd+W after raising it.
+///   3. Fallback: SIGTERM the agent pid, which usually causes the shell to
+///      exit and the tab to close naturally.
+@MainActor
+enum TerminalCloseService {
+    static func close(_ session: AgentSession) {
+        let terminal = session.terminalName.flatMap(TerminalApp.match)
+
+        switch terminal {
+        case .terminal:
+            if let tty = session.tty, closeTerminalAppTab(tty: tty) { return }
+        case .iterm:
+            if let tty = session.tty, closeITermSession(tty: tty) { return }
+        case .ghostty:
+            if closeAXWindow(for: .ghostty, session: session) { return }
+        case .warp, .wezterm, .kitty, .alacritty:
+            if let terminal, closeAXWindow(for: terminal, session: session) { return }
+        case .none:
+            break
+        }
+
+        // Fallback: kill the agent process which typically causes the tab to
+        // close on its own.
+        if let pid = session.pid, pid > 0 {
+            kill(pid_t(pid), SIGTERM)
+        }
+    }
+
+    // MARK: - Accessibility close
+
+    private static func closeAXWindow(for terminal: TerminalApp, session: AgentSession) -> Bool {
+        guard AXIsProcessTrusted() else { return false }
+
+        guard let app = NSRunningApplication.runningApplications(withBundleIdentifier: terminal.bundleID).first else {
+            return false
+        }
+
+        let appElement = AXUIElementCreateApplication(app.processIdentifier)
+        var windowsValue: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(appElement, kAXWindowsAttribute as CFString, &windowsValue) == .success,
+              let windows = windowsValue as? [AXUIElement] else {
+            return false
+        }
+
+        // Find the best matching window using the same scoring as focus
+        let matches = windows.compactMap { window -> (window: AXUIElement, score: Int)? in
+            let title = stringAttribute(kAXTitleAttribute, from: window) ?? ""
+            let document = stringAttribute(kAXDocumentAttribute, from: window)
+            let score = scoreWindow(title: title, document: document, session: session)
+            guard score > 0 else { return nil }
+            return (window, score)
+        }
+        .sorted { $0.score > $1.score }
+
+        guard let match = matches.first else { return false }
+
+        // Try to find and press the close button
+        var closeButtonValue: CFTypeRef?
+        if AXUIElementCopyAttributeValue(match.window, kAXCloseButtonAttribute as CFString, &closeButtonValue) == .success,
+           let closeButton = closeButtonValue as! AXUIElement? {
+            let result = AXUIElementPerformAction(closeButton, kAXPressAction as CFString)
+            if result == .success { return true }
+        }
+
+        // Fallback: raise the window and send Cmd+W
+        _ = AXUIElementPerformAction(match.window, kAXRaiseAction as CFString)
+        _ = app.activate(options: [.activateAllWindows])
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+            sendCmdW()
+        }
+        return true
+    }
+
+    private static func sendCmdW() {
+        guard let source = CGEventSource(stateID: .hidSystemState) else { return }
+        // 13 = 'w' keycode
+        let keyDown = CGEvent(keyboardEventSource: source, virtualKey: 13, keyDown: true)
+        keyDown?.flags = .maskCommand
+        keyDown?.post(tap: .cghidEventTap)
+
+        let keyUp = CGEvent(keyboardEventSource: source, virtualKey: 13, keyDown: false)
+        keyUp?.flags = .maskCommand
+        keyUp?.post(tap: .cghidEventTap)
+    }
+
+    // MARK: - AppleScript close
+
+    private static func closeTerminalAppTab(tty: String) -> Bool {
+        let escaped = tty.replacingOccurrences(of: "\"", with: "\\\"")
+        let source = """
+        tell application "Terminal"
+          repeat with w in windows
+            repeat with t in tabs of w
+              try
+                if (tty of t as string) is equal to "\(escaped)" then
+                  close w
+                  return true
+                end if
+              end try
+            end repeat
+          end repeat
+        end tell
+        return false
+        """
+        return runAppleScript(source)
+    }
+
+    private static func closeITermSession(tty: String) -> Bool {
+        let escaped = tty.replacingOccurrences(of: "\"", with: "\\\"")
+        let source = """
+        tell application "iTerm"
+          repeat with w in windows
+            repeat with t in tabs of w
+              repeat with s in sessions of t
+                try
+                  if (tty of s as string) is equal to "\(escaped)" then
+                    close s
+                    return true
+                  end if
+                end try
+              end repeat
+            end repeat
+          end repeat
+        end tell
+        return false
+        """
+        return runAppleScript(source)
+    }
+
+    // MARK: - Helpers
+
+    private static func scoreWindow(title: String, document: String?, session: AgentSession) -> Int {
+        let normalizedTitle = title.lowercased()
+        let normalizedProject = session.projectName.lowercased()
+        let normalizedCWD = normalizedPath(expandingHomeIn(session.cwd))
+        let documentPath = document.flatMap(pathFromDocument).map(normalizedPath)
+
+        var score = 0
+        if let documentPath, documentPath == normalizedCWD {
+            score += 100
+        }
+        if normalizedTitle.contains(normalizedProject) {
+            score += 40
+        }
+        if normalizedTitle.contains(session.title.lowercased().prefix(20)) {
+            score += 30
+        }
+        return score
+    }
+
+    private static func stringAttribute(_ attribute: String, from element: AXUIElement) -> String? {
+        var value: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(element, attribute as CFString, &value) == .success else { return nil }
+        return value as? String
+    }
+
+    private static func pathFromDocument(_ document: String) -> String? {
+        if let url = URL(string: document), url.isFileURL { return url.path }
+        return nil
+    }
+
+    private static func expandingHomeIn(_ path: String) -> String {
+        if path == "~" { return NSHomeDirectory() }
+        if path.hasPrefix("~/") { return NSHomeDirectory() + String(path.dropFirst()) }
+        return path
+    }
+
+    private static func normalizedPath(_ path: String) -> String {
+        (path as NSString).standardizingPath.trimmingCharacters(in: CharacterSet(charactersIn: "/")).lowercased()
+    }
+
+    @discardableResult
+    private static func runAppleScript(_ source: String) -> Bool {
+        guard let script = NSAppleScript(source: source) else { return false }
+        var error: NSDictionary?
+        script.executeAndReturnError(&error)
+        return error == nil
+    }
+}

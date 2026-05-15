@@ -168,10 +168,10 @@ final class NotchViewModel: ObservableObject {
         collapse()
     }
 
-    /// Terminate the agent process backing this session (SIGTERM).
+    /// Close the terminal window/tab that owns this session, then kill the
+    /// agent process as a fallback.
     func closeSession(_ session: AgentSession) {
-        guard let pid = session.pid, pid > 0 else { return }
-        kill(pid_t(pid), SIGTERM)
+        TerminalCloseService.close(session)
     }
 
     /// Performs an action on a recent project (open in the preferred terminal /
