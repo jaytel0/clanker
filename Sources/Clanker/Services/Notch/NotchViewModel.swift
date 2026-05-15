@@ -15,8 +15,8 @@ enum NotchPane: String, CaseIterable, Identifiable, Sendable {
 
     var title: String {
         switch self {
-        case .sessions: "Sessions"
-        case .recents: "Recents"
+        case .sessions: "Clankers"
+        case .recents: "Recent projects"
         }
     }
 }
@@ -28,6 +28,16 @@ final class NotchViewModel: ObservableObject {
     @Published var selectedPane: NotchPane = .sessions
     @Published private(set) var sessions: [AgentSession] = []
     @Published private(set) var recents: [RecentProject] = []
+
+    /// Set by the controller so the view knows which display type is active.
+    @Published var screenHasNotch = false
+
+    /// The current effective closed width based on screen type.
+    var currentClosedWidth: CGFloat {
+        screenHasNotch
+            ? NotchWindowController.closedWidthNotched
+            : NotchWindowController.closedWidthFlat
+    }
 
     private let recentsStore: RecentProjectsStore?
     let updateManager: GitHubUpdateManager

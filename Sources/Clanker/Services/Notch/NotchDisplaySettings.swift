@@ -145,6 +145,13 @@ extension NSScreen {
         return CGDirectDisplayID(number.uint32Value)
     }
 
+    /// True when this screen has a physical notch (MacBook Pro 2021+).
+    /// Detected via `safeAreaInsets.top > 0` which the OS only reports for
+    /// notched built-in displays.
+    var hasNotch: Bool {
+        safeAreaInsets.top > 0
+    }
+
     static func clankerScreen(matching displayID: CGDirectDisplayID) -> NSScreen? {
         screens.first { $0.clankerDisplayID == displayID }
     }

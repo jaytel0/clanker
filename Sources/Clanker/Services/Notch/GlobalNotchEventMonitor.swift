@@ -63,10 +63,12 @@ final class GlobalNotchEventMonitor {
 
         guard let viewModel, let screen = currentScreen() else { return }
         let location = NSEvent.mouseLocation
+        let cw = viewModel.currentClosedWidth
         let inside = NotchHitTest.cursorInsideHoverSurface(
             location,
             screen: screen,
-            isExpanded: viewModel.isExpanded
+            isExpanded: viewModel.isExpanded,
+            closedWidth: cw
         )
         viewModel.setHover(inside)
     }
@@ -74,6 +76,7 @@ final class GlobalNotchEventMonitor {
     private func handleMouseDown() {
         guard let viewModel, let screen = currentScreen() else { return }
         let location = NSEvent.mouseLocation
+        let cw = viewModel.currentClosedWidth
 
         if viewModel.isExpanded {
             // Click outside the opened silhouette → collapse. Clicks inside
@@ -83,7 +86,8 @@ final class GlobalNotchEventMonitor {
             let inside = NotchHitTest.cursorInsideHoverSurface(
                 location,
                 screen: screen,
-                isExpanded: true
+                isExpanded: true,
+                closedWidth: cw
             )
             if !inside { viewModel.collapse() }
         } else {
@@ -93,7 +97,8 @@ final class GlobalNotchEventMonitor {
             let inside = NotchHitTest.cursorInsideHoverSurface(
                 location,
                 screen: screen,
-                isExpanded: false
+                isExpanded: false,
+                closedWidth: cw
             )
             if inside { viewModel.toggleExpanded() }
         }
@@ -116,17 +121,19 @@ enum NotchHitTest {
     static func cursorInsideHoverSurface(
         _ location: CGPoint,
         screen: NSScreen,
-        isExpanded: Bool
+        isExpanded: Bool,
+        closedWidth: CGFloat? = nil
     ) -> Bool {
-        shapeRect(on: screen, isExpanded: isExpanded)
+        shapeRect(on: screen, isExpanded: isExpanded, closedWidth: closedWidth)
             .insetBy(dx: hoverInset, dy: hoverInset)
             .contains(location)
     }
 
-    static func shapeRect(on screen: NSScreen, isExpanded: Bool) -> CGRect {
+    static func shapeRect(on screen: NSScreen, isExpanded: Bool, closedWidth: CGFloat? = nil) -> CGRect {
+        let cw = closedWidth ?? NotchWindowController.closedWidth(for: screen)
         let width: CGFloat = isExpanded
             ? NotchWindowController.expandedWidth
-            : NotchWindowController.closedWidth
+            : cw
         let height: CGFloat = isExpanded
             ? NotchWindowController.expandedHeight
             : NotchWindowController.closedHeight

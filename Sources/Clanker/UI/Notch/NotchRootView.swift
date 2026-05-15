@@ -10,7 +10,7 @@ struct NotchRootView: View {
     var body: some View {
         let notchWidth = viewModel.isExpanded
             ? NotchWindowController.expandedWidth
-            : NotchWindowController.closedWidth
+            : viewModel.currentClosedWidth
         let notchHeight = viewModel.isExpanded
             ? NotchWindowController.expandedHeight
             : NotchWindowController.closedHeight

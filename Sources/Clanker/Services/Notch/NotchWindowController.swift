@@ -6,11 +6,17 @@ import SwiftUI
 final class NotchWindowController: NSWindowController {
     /// Closed-state notch dimensions.
     ///
-    /// The physical MacBook notch is ~230 pt wide. We extend ~70 pt past it on
-    /// each side so the harness icons and attention badge sit clear of the
-    /// hardware silhouette instead of being eclipsed by it.
-    static let closedWidth: CGFloat = 372
+    /// On a notched MacBook display, the closed bar must be wide enough to
+    /// span past the hardware notch (~230pt) so harness icons sit clear of
+    /// the silhouette. On non-notch displays (Studio Display, externals) we
+    /// can be much narrower — just enough for icons + badge.
+    static let closedWidthNotched: CGFloat = 310
+    static let closedWidthFlat: CGFloat = 230
     static let closedHeight: CGFloat = 32
+
+    static func closedWidth(for screen: NSScreen) -> CGFloat {
+        screen.hasNotch ? closedWidthNotched : closedWidthFlat
+    }
 
     /// Expanded-state notch dimensions.
     static let expandedWidth: CGFloat = 660
@@ -32,6 +38,7 @@ final class NotchWindowController: NSWindowController {
     init(screen: NSScreen, viewModel: NotchViewModel) {
         self.screen = screen
         self.viewModel = viewModel
+        viewModel.screenHasNotch = screen.hasNotch
 
         // The panel is ALWAYS sized to the expanded footprint and anchored to
         // the very top of the screen. The closed silhouette is just a smaller
@@ -117,6 +124,7 @@ final class NotchWindowController: NSWindowController {
         // No animation — jumping displays should feel instant, not draggy.
         if newScreen !== screen || panel.frame != frame {
             self.screen = newScreen
+            viewModel.screenHasNotch = newScreen.hasNotch
             panel.setFrame(frame, display: true, animate: false)
         }
     }
@@ -127,8 +135,9 @@ final class NotchWindowController: NSWindowController {
     /// The painted shape is horizontally centered in the panel and pinned to
     /// the panel's top edge — so the shape rect's origin in panel-local
     /// coordinates is `((panelWidth - shapeWidth)/2, panelHeight - shapeHeight)`.
-    static func notchShapeContains(_ point: NSPoint, isExpanded: Bool) -> Bool {
-        let shapeWidth = isExpanded ? expandedWidth : closedWidth
+    static func notchShapeContains(_ point: NSPoint, isExpanded: Bool, closedWidth: CGFloat? = nil) -> Bool {
+        let cw = closedWidth ?? closedWidthNotched
+        let shapeWidth = isExpanded ? expandedWidth : cw
         let shapeHeight = isExpanded ? expandedHeight : closedHeight
         let topRadius = isExpanded ? expandedTopRadius : closedTopRadius
         let bottomRadius = isExpanded ? expandedBottomRadius : closedBottomRadius
