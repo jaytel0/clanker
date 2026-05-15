@@ -127,8 +127,7 @@ struct SessionTitleContext: Sendable {
             preview,
             projectName,
             cwd,
-            harness.rawValue,
-            status.rawValue
+            harness.rawValue
         ].joined(separator: "||")
     }
 
@@ -176,15 +175,15 @@ enum SessionTitleText {
         }
 
         guard let phrase = firstUsefulPhrase(in: cleaned) else { return nil }
-        let stripped = stripLeadingFiller(from: phrase)
-        let words = stripped
+        guard let taskPhrase = taskPhrase(from: phrase, context: context) else { return nil }
+        let words = taskPhrase
             .split(separator: " ")
             .map(String.init)
             .filter { !$0.isEmpty }
 
         guard !words.isEmpty else { return nil }
         let limited = words.prefix(6).joined(separator: " ")
-        return titleCase(limited)
+        return phraseCase(limited)
     }
 
     static func cleanGeneratedTitle(_ value: String, fallbackContext context: SessionTitleContext) -> String? {
@@ -207,7 +206,8 @@ enum SessionTitleText {
             return nil
         }
 
-        return titleCase(title)
+        let taskTitle = taskPhrase(from: title, context: context) ?? title
+        return phraseCase(taskTitle)
     }
 
     static func clean(_ value: String) -> String {
@@ -275,9 +275,21 @@ enum SessionTitleText {
         return phrase?.trimmingCharacters(in: CharacterSet(charactersIn: "\"'` "))
     }
 
+    private static func taskPhrase(from value: String, context: SessionTitleContext) -> String? {
+        let stripped = stripLeadingFiller(from: value)
+        let normalized = normalizeUserRequest(stripped)
+        guard !normalized.isEmpty,
+              !isGeneric(normalized, harness: context.harness),
+              !looksLikeModelOrUsageLabel(normalized),
+              !looksLikePath(normalized) else {
+            return nil
+        }
+        return normalized
+    }
+
     private static func stripLeadingFiller(from value: String) -> String {
         var result = value.trimmingCharacters(in: .whitespacesAndNewlines)
-        let lowercased = result.lowercased()
+        var lowercased = result.lowercased()
         let prefixes = [
             "can we ",
             "can you ",
@@ -287,45 +299,283 @@ enum SessionTitleText {
             "please ",
             "okay ",
             "ok ",
+            "i want to ",
+            "i'd like to ",
             "let's ",
             "lets ",
             "i need to ",
+            "i need you to ",
+            "we should ",
             "we need to "
         ]
 
-        for prefix in prefixes where lowercased.hasPrefix(prefix) {
-            result = String(result.dropFirst(prefix.count))
-            break
+        var stripped = true
+        while stripped {
+            stripped = false
+            for prefix in prefixes where lowercased.hasPrefix(prefix) {
+                result = String(result.dropFirst(prefix.count)).trimmingCharacters(in: .whitespacesAndNewlines)
+                lowercased = result.lowercased()
+                stripped = true
+                break
+            }
         }
 
         return result
     }
 
-    private static func titleCase(_ value: String) -> String {
-        let acronyms: [String: String] = [
+    private static func normalizeUserRequest(_ value: String) -> String {
+        let value = value
+            .trimmingCharacters(in: CharacterSet(charactersIn: "\"'` "))
+            .trimmingCharacters(in: CharacterSet(charactersIn: ".:;-?! "))
+        let lowercased = value.lowercased()
+
+        if let subject = subject(afterAnyPrefix: [
+            "make the ",
+            "make a ",
+            "make an ",
+            "make "
+        ], in: lowercased, original: value),
+           let improvedSubject = stripTrailingQualityWord(from: subject) {
+            return "Improve \(stripLeadingArticle(from: improvedSubject))"
+        }
+
+        if let subject = subject(afterAnyPrefix: [
+            "improve the ",
+            "improve a ",
+            "improve an ",
+            "improve "
+        ], in: lowercased, original: value) {
+            return "Improve \(stripLeadingArticle(from: subject))"
+        }
+
+        if let subject = subject(afterAnyPrefix: [
+            "fix the ",
+            "fix a ",
+            "fix an ",
+            "fix "
+        ], in: lowercased, original: value) {
+            return "Fix \(stripLeadingArticle(from: subject))"
+        }
+
+        if let subject = missingInstallSubject(from: lowercased, original: value) {
+            return "Handle missing \(subject) install"
+        }
+
+        if let subject = clickBehaviorSubject(from: lowercased, original: value) {
+            return "Fix \(subject) click behavior"
+        }
+
+        if let subject = workingStatusSubject(from: lowercased, original: value) {
+            return "Check \(stripLeadingArticle(from: subject)) status"
+        }
+
+        if let subject = howWorksSubject(from: lowercased, original: value) {
+            if subject == "current" {
+                return "Inspect current behavior"
+            }
+            return "Inspect \(stripLeadingArticle(from: subject)) behavior"
+        }
+
+        return value
+    }
+
+    private static func subject(afterAnyPrefix prefixes: [String], in lowercased: String, original: String) -> String? {
+        for prefix in prefixes where lowercased.hasPrefix(prefix) {
+            let start = original.index(original.startIndex, offsetBy: prefix.count)
+            let subject = String(original[start...]).trimmingCharacters(in: .whitespacesAndNewlines)
+            return subject.isEmpty ? nil : subject
+        }
+        return nil
+    }
+
+    private static func stripTrailingQualityWord(from value: String) -> String? {
+        let endings = [
+            " better",
+            " nicer",
+            " cleaner",
+            " clearer",
+            " good",
+            " great"
+        ]
+        let lowercased = value.lowercased()
+        for ending in endings where lowercased.hasSuffix(ending) {
+            let end = value.index(value.endIndex, offsetBy: -ending.count)
+            let subject = String(value[..<end]).trimmingCharacters(in: .whitespacesAndNewlines)
+            return subject.isEmpty ? nil : subject
+        }
+        return nil
+    }
+
+    private static func stripLeadingArticle(from value: String) -> String {
+        var result = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        let lowercased = result.lowercased()
+        for article in ["the ", "a ", "an "] where lowercased.hasPrefix(article) {
+            result = String(result.dropFirst(article.count)).trimmingCharacters(in: .whitespacesAndNewlines)
+            break
+        }
+        return result
+    }
+
+    private static func missingInstallSubject(from lowercased: String, original: String) -> String? {
+        let installPhrases = [
+            " doesn't have ",
+            " doesnt have ",
+            " does not have ",
+            " missing "
+        ]
+        guard lowercased.hasPrefix("if ") || lowercased.hasPrefix("when ") else { return nil }
+
+        for phrase in installPhrases {
+            guard let range = lowercased.range(of: phrase) else { continue }
+            let startOffset = lowercased.distance(from: lowercased.startIndex, to: range.upperBound)
+            let start = original.index(original.startIndex, offsetBy: startOffset)
+            var subject = String(original[start...]).trimmingCharacters(in: .whitespacesAndNewlines)
+            for suffix in [" installed", " install"] where subject.lowercased().hasSuffix(suffix) {
+                let end = subject.index(subject.endIndex, offsetBy: -suffix.count)
+                subject = String(subject[..<end]).trimmingCharacters(in: .whitespacesAndNewlines)
+            }
+            let stripped = stripLeadingArticle(from: subject)
+            return stripped.isEmpty ? nil : stripped
+        }
+
+        return nil
+    }
+
+    private static func clickBehaviorSubject(from lowercased: String, original: String) -> String? {
+        guard lowercased.hasPrefix("when ") || lowercased.hasPrefix("click ") else { return nil }
+        let clickPhrases = [
+            "click on a ",
+            "click on an ",
+            "click on the ",
+            "click on ",
+            "click a ",
+            "click an ",
+            "click the ",
+            "click "
+        ]
+
+        for phrase in clickPhrases {
+            guard let range = lowercased.range(of: phrase) else { continue }
+            let startOffset = lowercased.distance(from: lowercased.startIndex, to: range.upperBound)
+            let start = original.index(original.startIndex, offsetBy: startOffset)
+            let subject = String(original[start...])
+                .trimmingCharacters(in: CharacterSet(charactersIn: ".:;-?! "))
+            let stripped = stripLeadingArticle(from: subject)
+            return stripped.isEmpty ? nil : stripped
+        }
+
+        return nil
+    }
+
+    private static func workingStatusSubject(from lowercased: String, original: String) -> String? {
+        guard lowercased.hasPrefix("is ") || lowercased.hasPrefix("are ") else { return nil }
+        let prefixes = ["is our ", "is the ", "is a ", "is an ", "is ", "are our ", "are the ", "are "]
+        for prefix in prefixes where lowercased.hasPrefix(prefix) {
+            let start = original.index(original.startIndex, offsetBy: prefix.count)
+            let remainder = String(original[start...])
+            let remainderLowercased = remainder.lowercased()
+            for suffix in [" working", " broken", " fixed", " ready"] where remainderLowercased.hasSuffix(suffix) {
+                let end = remainder.index(remainder.endIndex, offsetBy: -suffix.count)
+                let subject = String(remainder[..<end]).trimmingCharacters(in: .whitespacesAndNewlines)
+                return subject.isEmpty ? nil : subject
+            }
+        }
+        return nil
+    }
+
+    private static func howWorksSubject(from lowercased: String, original: String) -> String? {
+        let prefixes = ["how does ", "how is ", "how's ", "hows "]
+        let suffixes = [" work now", " working now", " work", " working"]
+
+        for prefix in prefixes where lowercased.hasPrefix(prefix) {
+            let start = original.index(original.startIndex, offsetBy: prefix.count)
+            var subject = String(original[start...]).trimmingCharacters(in: .whitespacesAndNewlines)
+            let subjectLowercased = subject.lowercased()
+            for suffix in suffixes where subjectLowercased.hasSuffix(suffix) {
+                let end = subject.index(subject.endIndex, offsetBy: -suffix.count)
+                subject = String(subject[..<end]).trimmingCharacters(in: .whitespacesAndNewlines)
+                break
+            }
+
+            let stripped = stripLeadingArticle(from: subject)
+            guard !stripped.isEmpty else { return nil }
+            if ["it", "this", "that"].contains(stripped.lowercased()) {
+                return "current"
+            }
+            return stripped
+        }
+
+        return nil
+    }
+
+    private static func phraseCase(_ value: String) -> String {
+        let preservedWords: [String: String] = [
             "ai": "AI",
+            "appkit": "AppKit",
             "api": "API",
+            "claude": "Claude",
+            "codex": "Codex",
+            "gcp": "GCP",
+            "git": "Git",
+            "ghostty": "Ghostty",
+            "github": "GitHub",
+            "graphql": "GraphQL",
+            "ios": "iOS",
+            "javascript": "JavaScript",
             "cli": "CLI",
             "json": "JSON",
             "jsonl": "JSONL",
             "macos": "macOS",
+            "openai": "OpenAI",
+            "pi": "Pi",
             "pr": "PR",
+            "readme": "README",
             "spm": "SPM",
+            "swift": "Swift",
+            "swiftpm": "SwiftPM",
+            "swiftui": "SwiftUI",
+            "typescript": "TypeScript",
             "ui": "UI",
             "url": "URL",
             "xcode": "Xcode"
         ]
-        let minorWords: Set<String> = ["a", "an", "and", "as", "at", "for", "in", "of", "on", "or", "the", "to", "with"]
         let words = value.split(separator: " ").map(String.init)
 
         return words.enumerated().map { index, word in
-            let trimmed = word.trimmingCharacters(in: CharacterSet(charactersIn: "\"'`.,:;!?()[]{}"))
-            let key = trimmed.lowercased()
-            if let acronym = acronyms[key] { return acronym }
-            if index > 0, minorWords.contains(key) { return key }
-            guard let first = trimmed.first else { return trimmed }
-            return first.uppercased() + trimmed.dropFirst()
+            phraseCaseWord(word, isFirst: index == 0, preservedWords: preservedWords)
         }.joined(separator: " ")
+    }
+
+    private static func phraseCaseWord(
+        _ value: String,
+        isFirst: Bool,
+        preservedWords: [String: String]
+    ) -> String {
+        let trimSet = CharacterSet(charactersIn: "\"'`.,:;!?()[]{}")
+        let prefix = String(value.prefix { character in
+            String(character).rangeOfCharacter(from: trimSet) != nil
+        })
+        let suffix = String(value.reversed().prefix { character in
+            String(character).rangeOfCharacter(from: trimSet) != nil
+        }.reversed())
+        let coreStart = value.index(value.startIndex, offsetBy: prefix.count)
+        let coreEnd = value.index(value.endIndex, offsetBy: -suffix.count)
+        guard coreStart <= coreEnd else { return value }
+
+        let core = String(value[coreStart..<coreEnd])
+        guard !core.isEmpty else { return value }
+
+        let key = core.lowercased()
+        if let preserved = preservedWords[key] {
+            return prefix + preserved + suffix
+        }
+
+        let lowercased = core.lowercased()
+        if isFirst, let first = lowercased.first {
+            return prefix + first.uppercased() + String(lowercased.dropFirst()) + suffix
+        }
+
+        return prefix + lowercased + suffix
     }
 
     private static func looksLikeProcessLabel(_ value: String) -> Bool {
@@ -373,9 +623,14 @@ private enum FoundationModelSessionTitleGenerator {
         let session = LanguageModelSession(
             model: model,
             instructions: """
-            You name local coding terminal sessions.
-            Return only a short title, 2 to 5 words.
-            Prefer a concrete verb phrase like "Fix Session Titles".
+            You name local coding sessions by the active engineering task.
+            Return only a short sentence-case title, 2 to 5 words.
+            Do not mirror the user's question or write from the user's perspective.
+            Prefer imperative task phrases like "Fix session titles" or "Improve model naming".
+            Examples:
+            "Can we make the foundation model naming better?" -> "Improve foundation model naming"
+            "When I click on a session..." -> "Fix session click behavior"
+            "Is our foundation model working?" -> "Check foundation model status"
             Do not include app names, project names, quotes, punctuation, or explanations.
             """
         )
