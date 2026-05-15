@@ -6,6 +6,7 @@ final class LocalSessionStore: ObservableObject {
     @Published private(set) var sessions: [AgentSession] = []
 
     private var timer: Timer?
+    private var isRefreshing = false
 
     func start() {
         guard timer == nil else { return }
@@ -30,10 +31,19 @@ final class LocalSessionStore: ObservableObject {
     }
 
     private func refresh() {
+        guard !isRefreshing else { return }
+        isRefreshing = true
+
         Task.detached(priority: .utility) {
             let sessions = await LocalSessionScanner.scan()
+            let titledSessions = await SessionTitleService.shared.applyCachedTitles(to: sessions)
             await MainActor.run {
-                self.sessions = sessions
+                self.sessions = titledSessions
+                self.isRefreshing = false
+            }
+
+            Task.detached(priority: .utility) {
+                await SessionTitleService.shared.generateMissingTitles(for: sessions)
             }
         }
     }

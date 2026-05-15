@@ -17,6 +17,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private let sessionStore = LocalSessionStore()
     private lazy var recentsStore = RecentProjectsStore(sessionStore: sessionStore)
     private var notchController: NotchWindowController?
+    private var onboardingController: OnboardingWindowController?
     private var screenObservers: [NSObjectProtocol] = []
     private var screenPollTimer: Timer?
 
@@ -29,8 +30,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         NSApp.setActivationPolicy(.accessory)
         sessionStore.start()
         recentsStore.start()
-        showNotch()
-        installScreenObservers()
+
+        if RecentsSettings.shared.hasCompletedSetup {
+            showNotch()
+            installScreenObservers()
+        } else {
+            showOnboarding()
+        }
     }
 
     func applicationWillTerminate(_ notification: Notification) {
@@ -41,6 +47,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             NotificationCenter.default.removeObserver(observer)
             NSWorkspace.shared.notificationCenter.removeObserver(observer)
         }
+    }
+
+    private func showOnboarding() {
+        let controller = OnboardingWindowController()
+        controller.onFinish = { [weak self] _ in
+            self?.onboardingController = nil
+            self?.showNotch()
+            self?.installScreenObservers()
+        }
+        controller.present()
+        onboardingController = controller
     }
 
     private func showNotch() {

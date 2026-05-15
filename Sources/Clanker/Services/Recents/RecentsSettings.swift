@@ -13,7 +13,11 @@ final class RecentsSettings: ObservableObject {
     private enum Key {
         static let roots = "recents.roots"
         static let cdHookEnabled = "recents.cdHookEnabled"
+        static let defaultRootsVersion = "recents.defaultRootsVersion"
+        static let hasCompletedSetup = "recents.hasCompletedSetup"
     }
+
+    private static let currentDefaultRootsVersion = 1
 
     /// Folders we walk for repos. Each direct child containing a `.git` entry
     /// is treated as a repo; the basename of the root becomes its category.
@@ -28,17 +32,52 @@ final class RecentsSettings: ObservableObject {
         didSet { defaults.set(cdHookEnabled, forKey: Key.cdHookEnabled) }
     }
 
+    /// `true` once the user has finished the first-run setup flow.
+    @Published var hasCompletedSetup: Bool {
+        didSet { defaults.set(hasCompletedSetup, forKey: Key.hasCompletedSetup) }
+    }
+
     private let defaults: UserDefaults
 
     init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
 
-        let defaultRoots = [
-            (NSHomeDirectory() as NSString).appendingPathComponent("Developer/personal"),
-            (NSHomeDirectory() as NSString).appendingPathComponent("Developer/shopify")
-        ]
-        self.roots = (defaults.array(forKey: Key.roots) as? [String]) ?? defaultRoots
+        let defaultRoots = Self.defaultRoots()
+        var roots = (defaults.array(forKey: Key.roots) as? [String]) ?? defaultRoots
+        if defaults.integer(forKey: Key.defaultRootsVersion) < Self.currentDefaultRootsVersion {
+            roots = Self.appendingMissingRoots(
+                [
+                    (NSHomeDirectory() as NSString).appendingPathComponent("Developer/tries")
+                ],
+                to: roots
+            )
+            defaults.set(roots, forKey: Key.roots)
+            defaults.set(Self.currentDefaultRootsVersion, forKey: Key.defaultRootsVersion)
+        }
+        self.roots = roots
 
         self.cdHookEnabled = defaults.bool(forKey: Key.cdHookEnabled)
+        self.hasCompletedSetup = defaults.bool(forKey: Key.hasCompletedSetup)
+    }
+
+    private static func defaultRoots() -> [String] {
+        [
+            (NSHomeDirectory() as NSString).appendingPathComponent("Developer/personal"),
+            (NSHomeDirectory() as NSString).appendingPathComponent("Developer/shopify"),
+            (NSHomeDirectory() as NSString).appendingPathComponent("Developer/tries")
+        ]
+    }
+
+    private static func appendingMissingRoots(_ additions: [String], to roots: [String]) -> [String] {
+        var result = roots
+        let existing = Set(roots.map(normalizedPath))
+        for root in additions where !existing.contains(normalizedPath(root)) {
+            result.append(root)
+        }
+        return result
+    }
+
+    private static func normalizedPath(_ path: String) -> String {
+        (path as NSString).standardizingPath
     }
 }

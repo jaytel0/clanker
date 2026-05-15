@@ -75,10 +75,6 @@ struct NotchRootView: View {
         .clipShape(NotchShape(topRadius: topRadius, bottomRadius: bottomRadius))
         .contentShape(NotchShape(topRadius: topRadius, bottomRadius: bottomRadius))
         .compositingGroup()
-        .shadow(color: .black.opacity(viewModel.isExpanded ? 0.32 : 0.18),
-                radius: viewModel.isExpanded ? 28 : 12,
-                x: 0,
-                y: viewModel.isExpanded ? 14 : 6)
         // Hover and click-to-toggle are driven globally by
         // `GlobalNotchEventMonitor` so they work even when the panel has
         // `ignoresMouseEvents = true` (closed state). SwiftUI's `.onHover`
@@ -258,15 +254,14 @@ private struct ExpandedContent: View {
                     .frame(maxWidth: .infinity)
                     .padding(.top, 40)
                 } else {
-                    ForEach(viewModel.recents) { project in
-                        RecentProjectRow(
-                            project: project,
-                            onPrimary: { viewModel.activate(project, action: .ghostty) },
-                            onFinder: { viewModel.activate(project, action: .finder) },
-                            onGithub: { viewModel.activate(project, action: .github) }
+                    ForEach(viewModel.groupedRecents) { group in
+                        RecentProjectGroupView(
+                            group: group,
+                            edgeInset: Self.edgeInset,
+                            onPrimary: { viewModel.activate($0, action: .ghostty) },
+                            onFinder: { viewModel.activate($0, action: .finder) },
+                            onGithub: { viewModel.activate($0, action: .github) }
                         )
-                        .padding(.horizontal, Self.edgeInset)
-                        .transition(.opacity.combined(with: .offset(y: 4)))
                     }
                 }
             }
@@ -453,7 +448,64 @@ private struct HeaderPill: View {
 
 // MARK: - Group + rows
 
-// MARK: - Recents section
+private struct RecentProjectGroupView: View {
+    let group: RecentProjectGroup
+    let edgeInset: CGFloat
+    let onPrimary: (RecentProject) -> Void
+    let onFinder: (RecentProject) -> Void
+    let onGithub: (RecentProject) -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            RecentProjectGroupHeader(group: group)
+                .padding(.horizontal, edgeInset)
+
+            VStack(spacing: 4) {
+                ForEach(group.projects) { project in
+                    RecentProjectRow(
+                        project: project,
+                        onPrimary: { onPrimary(project) },
+                        onFinder: { onFinder(project) },
+                        onGithub: { onGithub(project) }
+                    )
+                    .padding(.horizontal, edgeInset)
+                    .transition(.opacity.combined(with: .offset(y: 4)))
+                }
+            }
+        }
+        .padding(.top, group.title == "Today" ? 0 : 8)
+    }
+}
+
+private struct RecentProjectGroupHeader: View {
+    let group: RecentProjectGroup
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Text(group.title)
+                .font(.system(size: 11.5, weight: .semibold, design: .rounded))
+                .foregroundStyle(.white.opacity(0.72))
+                .lineLimit(1)
+
+            if group.projects.count > 1 {
+                Text("\(group.projects.count)")
+                    .font(.system(size: 9.5, weight: .semibold, design: .rounded))
+                    .monospacedDigit()
+                    .foregroundStyle(.white.opacity(0.52))
+                    .padding(.horizontal, 5)
+                    .padding(.vertical, 1)
+                    .background(
+                        Capsule(style: .continuous)
+                            .fill(.white.opacity(0.07))
+                    )
+            }
+
+            Spacer(minLength: 0)
+        }
+        .padding(.top, 2)
+        .padding(.bottom, 1)
+    }
+}
 
 private struct SessionGroupView: View {
     let group: SessionGroup

@@ -107,6 +107,10 @@ final class NotchViewModel: ObservableObject {
             }
     }
 
+    var groupedRecents: [RecentProjectGroup] {
+        RecentProjectGroup.group(recents)
+    }
+
     // MARK: - Intent
 
     func toggleExpanded() {
@@ -222,6 +226,49 @@ struct SessionGroup: Identifiable {
     var title: String
     var sessions: [AgentSession]
     var id: String { title }
+}
+
+struct RecentProjectGroup: Identifiable {
+    var title: String
+    var projects: [RecentProject]
+    var id: String { title }
+
+    static func group(_ projects: [RecentProject], now: Date = Date(), calendar: Calendar = .current) -> [RecentProjectGroup] {
+        var groups: [RecentProjectGroup] = []
+        for project in projects {
+            let title = title(for: project.score, now: now, calendar: calendar)
+            if let index = groups.firstIndex(where: { $0.title == title }) {
+                groups[index].projects.append(project)
+            } else {
+                groups.append(RecentProjectGroup(title: title, projects: [project]))
+            }
+        }
+        return groups
+    }
+
+    private static func title(for date: Date, now: Date, calendar: Calendar) -> String {
+        let today = calendar.startOfDay(for: now)
+        let activityDay = calendar.startOfDay(for: date)
+        let daysAgo = max(0, calendar.dateComponents([.day], from: activityDay, to: today).day ?? 0)
+
+        switch daysAgo {
+        case 0:
+            return "Today"
+        case 1:
+            return "Yesterday"
+        case 2..<14:
+            return "\(daysAgo) days ago"
+        case 14..<60:
+            let weeks = max(1, daysAgo / 7)
+            return weeks == 1 ? "1 week ago" : "\(weeks) weeks ago"
+        case 60..<365:
+            let months = max(1, calendar.dateComponents([.month], from: activityDay, to: today).month ?? daysAgo / 30)
+            return months == 1 ? "1 month ago" : "\(months) months ago"
+        default:
+            let years = max(1, calendar.dateComponents([.year], from: activityDay, to: today).year ?? daysAgo / 365)
+            return years == 1 ? "1 year ago" : "\(years) years ago"
+        }
+    }
 }
 
 extension Array where Element == AgentSession {

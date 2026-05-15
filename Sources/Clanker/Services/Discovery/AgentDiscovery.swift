@@ -13,7 +13,7 @@ enum LocalSessionScanner {
         discovered += await CodexAppServerSource.shared.scan()
         discovered += await MainActor.run { MacAppSource.scan() }
 
-        return SessionMerger.merge(discovered)
+        return SessionTitleHeuristics.apply(to: SessionMerger.merge(discovered))
     }
 }
 
@@ -663,11 +663,17 @@ private struct CodexTranscriptSource {
         let isDesktop = source != "cli"
         let launchURL = isDesktop ? "codex://threads/\(threadID)" : nil
 
+        let rawTitle = title
+            ?? latestUserMessage
+            ?? firstUserMessage
+            ?? latestAssistantMessage
+            ?? "Codex"
+
         return DiscoveredSession(
             sessionKey: "codex:\(threadID)",
             sourceKind: .transcript,
             id: "codex-\(threadID)",
-            title: "Codex",
+            title: DiscoveryHelpers.truncated(rawTitle, limit: 120),
             cwd: cwd,
             harness: .codex,
             status: status,
@@ -910,7 +916,7 @@ actor CodexAppServerSource {
             sessionKey: "codex:\(threadID)",
             sourceKind: .appServer,
             id: "codex-\(threadID)",
-            title: "Codex",
+            title: DiscoveryHelpers.truncated(name ?? preview, limit: 120),
             cwd: cwd,
             harness: .codex,
             status: status,
@@ -1303,11 +1309,16 @@ private struct PiSessionSource {
         ].compactMap { $0 }
         let preview = previewParts.isEmpty ? file.lastPathComponent : previewParts.joined(separator: " · ")
 
+        let title = usefulPiSessionName(name)
+            ?? latestUserMessage
+            ?? firstUserMessage
+            ?? "Pi"
+
         return DiscoveredSession(
             sessionKey: "pi:\(sessionID)",
             sourceKind: .transcript,
             id: "pi-\(sessionID)",
-            title: name ?? latestUserMessage ?? firstUserMessage ?? "Pi",
+            title: title,
             cwd: cwdValue,
             harness: .pi,
             status: piStatus(
@@ -1343,6 +1354,20 @@ private struct PiSessionSource {
             return .working
         }
         return Date().timeIntervalSince(modified) < 10 * 60 ? .active : .completed
+    }
+
+    private func usefulPiSessionName(_ value: String?) -> String? {
+        guard let value else { return nil }
+        let normalized = value.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        guard !normalized.isEmpty else { return nil }
+
+        let modelPrefixes = ["claude-", "gpt-", "o3", "o4", "gemini-", "llama-", "mistral-"]
+        if modelPrefixes.contains(where: normalized.hasPrefix) { return nil }
+        if normalized.contains(" tokens") || normalized.contains(" tools") || normalized.contains(" · ") {
+            return nil
+        }
+
+        return value
     }
 }
 
