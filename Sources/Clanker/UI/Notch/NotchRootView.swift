@@ -535,12 +535,23 @@ private struct SettingsCogButton: View {
                 Label("Quit Clanker", systemImage: "power")
             }
         } label: {
-            Image(systemName: "gearshape")
-                .font(.system(size: 12, weight: .medium))
-                .foregroundStyle(.white.opacity(hovering ? 0.70 : 0.32))
-                .frame(width: 28, height: 24)
-                .contentShape(Rectangle())
+            ZStack {
+                Circle()
+                    .fill(.white.opacity(hovering ? 0.16 : 0.08))
+                    .overlay(
+                        Circle()
+                            .stroke(.white.opacity(hovering ? 0.18 : 0.10), lineWidth: 0.5)
+                    )
+
+                Image(systemName: "gearshape.fill")
+                    .font(.system(size: 12.5, weight: .semibold))
+                    .symbolRenderingMode(.monochrome)
+                    .foregroundColor(.white.opacity(hovering ? 0.95 : 0.78))
+            }
+            .frame(width: 25, height: 25)
+            .contentShape(Circle())
         }
+        .colorScheme(.dark)
         .menuStyle(.borderlessButton)
         .menuIndicator(.hidden)
         .fixedSize()

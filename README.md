@@ -10,7 +10,7 @@
 
 <p align="center">
   <img src="https://img.shields.io/badge/macOS-14%2B-black?style=flat-square" />
-  <img src="https://img.shields.io/badge/version-0.1.2-black?style=flat-square" />
+  <img src="https://img.shields.io/badge/version-0.1.3-black?style=flat-square" />
   <img src="https://img.shields.io/badge/Swift-6-orange?style=flat-square" />
 </p>
 
