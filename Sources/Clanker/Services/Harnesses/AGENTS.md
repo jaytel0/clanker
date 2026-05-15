@@ -49,8 +49,13 @@ emit normalized Clanker models before anything reaches stores or SwiftUI.
 ## Parser Rules
 
 - Prefer cumulative totals over summing streaming deltas.
+- Emit one `HarnessUsageSnapshot` per usage event when the harness exposes
+  per-turn usage. Timeframe totals should not depend on a whole session's
+  final modified time.
 - Deduplicate repeated assistant records by stable ids when a harness writes
   multiple transcript rows for the same model response.
+- Set `observedAt` to the usage event or session update time, not scan time.
+  The Spend tab uses this field for Today / 7 days / 30 days filtering.
 - Keep scan limits bounded. Spend refresh runs in the background while the app
   is open.
 - Do not mutate harness transcript/session files.

@@ -48,6 +48,17 @@ struct UsageTokenBreakdown: Equatable, Sendable {
         total = combinedTotal > 0 ? combinedTotal : nil
     }
 
+    func subtracting(_ other: UsageTokenBreakdown) -> UsageTokenBreakdown {
+        UsageTokenBreakdown(
+            input: difference(input, other.input),
+            output: difference(output, other.output),
+            cacheWrite: difference(cacheWrite, other.cacheWrite),
+            cacheRead: difference(cacheRead, other.cacheRead),
+            reasoningOutput: difference(reasoningOutput, other.reasoningOutput),
+            total: difference(total, other.total)
+        )
+    }
+
     private func summed(_ lhs: Int?, _ rhs: Int?) -> Int? {
         switch (lhs, rhs) {
         case let (lhs?, rhs?): lhs + rhs
@@ -55,6 +66,11 @@ struct UsageTokenBreakdown: Equatable, Sendable {
         case let (nil, rhs?): rhs
         case (nil, nil): nil
         }
+    }
+
+    private func difference(_ lhs: Int?, _ rhs: Int?) -> Int? {
+        guard let lhs else { return nil }
+        return max(0, lhs - (rhs ?? 0))
     }
 }
 
@@ -77,6 +93,45 @@ struct HarnessUsageSnapshot: Identifiable, Equatable, Sendable {
     }
 }
 
+enum SpendTimeframe: String, CaseIterable, Identifiable, Sendable {
+    case today
+    case last7Days
+    case last30Days
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .today: "Today"
+        case .last7Days: "7 days"
+        case .last30Days: "30 days"
+        }
+    }
+
+    var shortLabel: String {
+        switch self {
+        case .today: "1d"
+        case .last7Days: "7d"
+        case .last30Days: "1m"
+        }
+    }
+
+    func contains(_ date: Date, now: Date = Date(), calendar: Calendar = .current) -> Bool {
+        date >= startDate(now: now, calendar: calendar)
+    }
+
+    private func startDate(now: Date, calendar: Calendar) -> Date {
+        switch self {
+        case .today:
+            return calendar.startOfDay(for: now)
+        case .last7Days:
+            return calendar.date(byAdding: .day, value: -7, to: now) ?? now.addingTimeInterval(-7 * 24 * 60 * 60)
+        case .last30Days:
+            return calendar.date(byAdding: .day, value: -30, to: now) ?? now.addingTimeInterval(-30 * 24 * 60 * 60)
+        }
+    }
+}
+
 struct SpendBreakdownItem: Identifiable, Equatable, Sendable {
     var id: String
     var title: String
@@ -90,6 +145,7 @@ struct SpendBreakdownItem: Identifiable, Equatable, Sendable {
 }
 
 struct SpendSummary: Equatable, Sendable {
+    var timeframe: SpendTimeframe
     var snapshots: [HarnessUsageSnapshot]
     var totalCostUSD: Decimal?
     var totalTokens: Int
@@ -97,8 +153,16 @@ struct SpendSummary: Equatable, Sendable {
     var byHarness: [SpendBreakdownItem]
     var byProject: [SpendBreakdownItem]
 
-    init(snapshots: [HarnessUsageSnapshot]) {
-        let usableSnapshots = snapshots.filter(\.hasSpendSignal)
+    init(
+        snapshots: [HarnessUsageSnapshot],
+        timeframe: SpendTimeframe = .last30Days,
+        now: Date = Date(),
+        calendar: Calendar = .current
+    ) {
+        self.timeframe = timeframe
+        let usableSnapshots = snapshots
+            .filter(\.hasSpendSignal)
+            .filter { timeframe.contains($0.observedAt, now: now, calendar: calendar) }
         self.snapshots = usableSnapshots
         totalCostUSD = Self.sumCost(usableSnapshots)
         totalTokens = usableSnapshots.map(\.tokens.knownTotal).reduce(0, +)
@@ -114,7 +178,7 @@ struct SpendSummary: Equatable, Sendable {
                 return SpendBreakdownItem(
                     id: "harness-\(harness.rawValue)",
                     title: harness.displayName,
-                    subtitle: "\(snapshots.count) \(snapshots.count == 1 ? "session" : "sessions")",
+                    subtitle: "\(snapshots.count) \(snapshots.count == 1 ? "event" : "events")",
                     harness: harness,
                     tokens: tokens,
                     costUSD: sumCost(snapshots),
@@ -138,7 +202,7 @@ struct SpendSummary: Equatable, Sendable {
                 return SpendBreakdownItem(
                     id: "project-\(projectName)",
                     title: projectName,
-                    subtitle: harnesses.isEmpty ? "\(snapshots.count) sessions" : harnesses,
+                    subtitle: harnesses.isEmpty ? "\(snapshots.count) events" : harnesses,
                     harness: nil,
                     tokens: tokens,
                     costUSD: sumCost(snapshots),

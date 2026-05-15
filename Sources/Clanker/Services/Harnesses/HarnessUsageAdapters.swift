@@ -61,25 +61,22 @@ struct PiUsageAdapter: HarnessUsageAdapter {
             maxAge: configuration.maxAge,
             limit: configuration.limitPerAdapter
         )
-        .compactMap { parse(file: $0.0, modified: $0.1, maxBytes: configuration.maxFileBytes) }
+        .flatMap { parse(file: $0.0, modified: $0.1, maxBytes: configuration.maxFileBytes) }
     }
 
-    private func parse(file: URL, modified: Date, maxBytes: Int) -> HarnessUsageSnapshot? {
+    private func parse(file: URL, modified: Date, maxBytes: Int) -> [HarnessUsageSnapshot] {
         guard let content = HarnessUsageFileHelpers.readUTF8File(file, maxBytes: maxBytes) else {
-            return nil
+            return []
         }
 
         var sessionID = file.deletingPathExtension().lastPathComponent
         var cwd: String?
-        var observedAt = modified
-        var modelWeights: [String: Decimal] = [:]
-        var tokens = UsageTokenBreakdown()
-        var totalCost = Decimal(0)
-        var hasReportedCost = false
+        var snapshots: [HarnessUsageSnapshot] = []
+        var sequence = 0
+        let fallbackCWD = decodeProjectPath(file.deletingLastPathComponent().lastPathComponent)
 
         for line in content.split(separator: "\n", omittingEmptySubsequences: true) {
             guard let json = HarnessUsageJSON.object(fromLine: line) else { continue }
-            observedAt = max(observedAt, HarnessUsageJSON.date(json["timestamp"]) ?? observedAt)
 
             switch HarnessUsageJSON.string(json["type"]) {
             case "session":
@@ -92,43 +89,38 @@ struct PiUsageAdapter: HarnessUsageAdapter {
                     continue
                 }
 
+                sequence += 1
                 let turnTokens = HarnessUsageJSON.tokens(from: usage)
-                tokens.add(turnTokens)
-
                 let cost = (usage["cost"] as? [String: Any])
                     .flatMap { HarnessUsageJSON.decimal($0["total"]) }
-                if let cost {
-                    totalCost += cost
-                    hasReportedCost = true
-                    if let model = HarnessUsageJSON.string(message["model"]) {
-                        modelWeights[model, default: 0] += cost
-                    }
-                } else if let model = HarnessUsageJSON.string(message["model"]) {
-                    modelWeights[model, default: 0] += Decimal(turnTokens.knownTotal)
-                }
+                guard turnTokens.knownTotal > 0 || cost != nil else { continue }
+
+                let model = HarnessUsageJSON.string(message["model"])
+                let cwdValue = cwd ?? fallbackCWD
+                let eventID = HarnessUsageJSON.string(message["responseId"])
+                    ?? HarnessUsageJSON.string(message["id"])
+                    ?? HarnessUsageJSON.string(json["id"])
+                    ?? "\(sequence)"
+                snapshots.append(HarnessUsageSnapshot(
+                    id: "pi-\(sessionID)-\(eventID)",
+                    harness: harness,
+                    sessionID: sessionID,
+                    projectName: HarnessUsageFileHelpers.projectName(for: cwdValue),
+                    cwd: HarnessUsageFileHelpers.abbreviateHome(cwdValue),
+                    model: model,
+                    tokens: turnTokens,
+                    costUSD: cost,
+                    costSource: cost == nil ? .quotaOnly : .reported,
+                    pricingSource: cost == nil ? nil : "Pi usage.cost.total",
+                    observedAt: HarnessUsageJSON.date(json["timestamp"]) ?? modified,
+                    sourcePath: file.path
+                ))
             default:
                 break
             }
         }
 
-        guard tokens.knownTotal > 0 || hasReportedCost else { return nil }
-
-        let cwdValue = cwd ?? decodeProjectPath(file.deletingLastPathComponent().lastPathComponent)
-        let model = modelWeights.max { lhs, rhs in lhs.value < rhs.value }?.key
-        return HarnessUsageSnapshot(
-            id: "pi-\(sessionID)",
-            harness: harness,
-            sessionID: sessionID,
-            projectName: HarnessUsageFileHelpers.projectName(for: cwdValue),
-            cwd: HarnessUsageFileHelpers.abbreviateHome(cwdValue),
-            model: model,
-            tokens: tokens,
-            costUSD: hasReportedCost ? totalCost : nil,
-            costSource: hasReportedCost ? .reported : .quotaOnly,
-            pricingSource: hasReportedCost ? "Pi usage.cost.total" : nil,
-            observedAt: observedAt,
-            sourcePath: file.path
-        )
+        return snapshots
     }
 
     private func decodeProjectPath(_ value: String) -> String {
@@ -149,20 +141,20 @@ struct ClaudeCodeUsageAdapter: HarnessUsageAdapter {
             maxAge: configuration.maxAge,
             limit: configuration.limitPerAdapter
         )
-        .compactMap { parse(file: $0.0, modified: $0.1, maxBytes: configuration.maxFileBytes) }
+        .flatMap { parse(file: $0.0, modified: $0.1, maxBytes: configuration.maxFileBytes) }
     }
 
-    private func parse(file: URL, modified: Date, maxBytes: Int) -> HarnessUsageSnapshot? {
+    private func parse(file: URL, modified: Date, maxBytes: Int) -> [HarnessUsageSnapshot] {
         guard let content = HarnessUsageFileHelpers.readUTF8File(file, maxBytes: maxBytes) else {
-            return nil
+            return []
         }
 
         var sessionID = file.deletingPathExtension().lastPathComponent
         var cwd: String?
-        var observedAt = modified
-        var modelWeights: [String: Decimal] = [:]
-        var tokens = UsageTokenBreakdown()
         var seenUsageIDs = Set<String>()
+        var snapshots: [HarnessUsageSnapshot] = []
+        var sequence = 0
+        let fallbackCWD = decodeProjectSlug(file.deletingLastPathComponent().lastPathComponent)
 
         for line in content.split(separator: "\n", omittingEmptySubsequences: true) {
             guard let json = HarnessUsageJSON.object(fromLine: line),
@@ -181,34 +173,31 @@ struct ClaudeCodeUsageAdapter: HarnessUsageAdapter {
 
             sessionID = HarnessUsageJSON.string(json["sessionId"]) ?? sessionID
             cwd = HarnessUsageJSON.string(json["cwd"]) ?? cwd
-            observedAt = max(observedAt, HarnessUsageJSON.date(json["timestamp"]) ?? observedAt)
 
+            sequence += 1
             let turnTokens = HarnessUsageJSON.tokens(from: usage)
-            tokens.add(turnTokens)
-            if let model = HarnessUsageJSON.string(message["model"]) {
-                modelWeights[model, default: 0] += Decimal(turnTokens.knownTotal)
-            }
+            guard turnTokens.knownTotal > 0 else { continue }
+
+            let model = HarnessUsageJSON.string(message["model"])
+            let estimate = UsagePricingCatalog.estimateCost(provider: "anthropic", model: model, tokens: turnTokens)
+            let cwdValue = cwd ?? fallbackCWD
+            snapshots.append(HarnessUsageSnapshot(
+                id: "claude-\(sessionID)-\(usageID ?? "\(sequence)")",
+                harness: harness,
+                sessionID: sessionID,
+                projectName: HarnessUsageFileHelpers.projectName(for: cwdValue),
+                cwd: HarnessUsageFileHelpers.abbreviateHome(cwdValue),
+                model: model,
+                tokens: turnTokens,
+                costUSD: estimate?.costUSD,
+                costSource: estimate == nil ? .quotaOnly : .estimated,
+                pricingSource: estimate?.pricingSource,
+                observedAt: HarnessUsageJSON.date(json["timestamp"]) ?? modified,
+                sourcePath: file.path
+            ))
         }
 
-        guard tokens.knownTotal > 0 else { return nil }
-
-        let cwdValue = cwd ?? decodeProjectSlug(file.deletingLastPathComponent().lastPathComponent)
-        let model = modelWeights.max { lhs, rhs in lhs.value < rhs.value }?.key
-        let estimate = UsagePricingCatalog.estimateCost(provider: "anthropic", model: model, tokens: tokens)
-        return HarnessUsageSnapshot(
-            id: "claude-\(sessionID)",
-            harness: harness,
-            sessionID: sessionID,
-            projectName: HarnessUsageFileHelpers.projectName(for: cwdValue),
-            cwd: HarnessUsageFileHelpers.abbreviateHome(cwdValue),
-            model: model,
-            tokens: tokens,
-            costUSD: estimate?.costUSD,
-            costSource: estimate == nil ? .quotaOnly : .estimated,
-            pricingSource: estimate?.pricingSource,
-            observedAt: observedAt,
-            sourcePath: file.path
-        )
+        return snapshots
     }
 
     private func decodeProjectSlug(_ slug: String) -> String {
@@ -230,24 +219,25 @@ struct CodexUsageAdapter: HarnessUsageAdapter {
             limit: configuration.limitPerAdapter
         )
         .filter { $0.0.lastPathComponent.hasPrefix("rollout-") }
-        .compactMap { parse(file: $0.0, modified: $0.1, maxBytes: configuration.maxFileBytes) }
+        .flatMap { parse(file: $0.0, modified: $0.1, maxBytes: configuration.maxFileBytes) }
     }
 
-    private func parse(file: URL, modified: Date, maxBytes: Int) -> HarnessUsageSnapshot? {
+    private func parse(file: URL, modified: Date, maxBytes: Int) -> [HarnessUsageSnapshot] {
         guard let content = HarnessUsageFileHelpers.readUTF8File(file, maxBytes: maxBytes) else {
-            return nil
+            return []
         }
 
         var sessionID = file.deletingPathExtension().lastPathComponent
             .replacingOccurrences(of: "rollout-", with: "")
         var cwd = NSHomeDirectory()
         var model: String?
-        var observedAt = modified
-        var totalTokens: UsageTokenBreakdown?
+        var previousTotalTokens: UsageTokenBreakdown?
+        var snapshots: [HarnessUsageSnapshot] = []
+        var sequence = 0
 
         for line in content.split(separator: "\n", omittingEmptySubsequences: true) {
             guard let json = HarnessUsageJSON.object(fromLine: line) else { continue }
-            observedAt = max(observedAt, HarnessUsageJSON.date(json["timestamp"]) ?? observedAt)
+            let observedAt = HarnessUsageJSON.date(json["timestamp"]) ?? modified
 
             switch HarnessUsageJSON.string(json["type"]) {
             case "session_meta":
@@ -266,29 +256,42 @@ struct CodexUsageAdapter: HarnessUsageAdapter {
                       let usage = info["total_token_usage"] as? [String: Any] else {
                     continue
                 }
-                totalTokens = HarnessUsageJSON.tokens(from: usage)
+                sequence += 1
+                let totalTokens = HarnessUsageJSON.tokens(from: usage)
+                let lastTokens = (info["last_token_usage"] as? [String: Any])
+                    .map(HarnessUsageJSON.tokens)
+                let eventTokens: UsageTokenBreakdown
+                if let lastTokens, lastTokens.knownTotal > 0 {
+                    eventTokens = lastTokens
+                } else if let previousTotalTokens {
+                    eventTokens = totalTokens.subtracting(previousTotalTokens)
+                } else {
+                    eventTokens = totalTokens
+                }
+                previousTotalTokens = totalTokens
+                guard eventTokens.knownTotal > 0 else { continue }
+
+                let estimate = UsagePricingCatalog.estimateCost(provider: "openai", model: model, tokens: eventTokens)
+                snapshots.append(HarnessUsageSnapshot(
+                    id: "codex-\(sessionID)-tokens-\(sequence)",
+                    harness: harness,
+                    sessionID: sessionID,
+                    projectName: HarnessUsageFileHelpers.projectName(for: cwd),
+                    cwd: HarnessUsageFileHelpers.abbreviateHome(cwd),
+                    model: model,
+                    tokens: eventTokens,
+                    costUSD: estimate?.costUSD,
+                    costSource: estimate == nil ? .quotaOnly : .estimated,
+                    pricingSource: estimate?.pricingSource,
+                    observedAt: observedAt,
+                    sourcePath: file.path
+                ))
             default:
                 break
             }
         }
 
-        guard let tokens = totalTokens, tokens.knownTotal > 0 else { return nil }
-
-        let estimate = UsagePricingCatalog.estimateCost(provider: "openai", model: model, tokens: tokens)
-        return HarnessUsageSnapshot(
-            id: "codex-\(sessionID)",
-            harness: harness,
-            sessionID: sessionID,
-            projectName: HarnessUsageFileHelpers.projectName(for: cwd),
-            cwd: HarnessUsageFileHelpers.abbreviateHome(cwd),
-            model: model,
-            tokens: tokens,
-            costUSD: estimate?.costUSD,
-            costSource: estimate == nil ? .quotaOnly : .estimated,
-            pricingSource: estimate?.pricingSource,
-            observedAt: observedAt,
-            sourcePath: file.path
-        )
+        return snapshots
     }
 }
 

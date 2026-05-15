@@ -79,6 +79,8 @@ struct NotchRootView: View {
         // `GlobalNotchEventMonitor` so they work even when the panel has
         // `ignoresMouseEvents = true` (closed state). SwiftUI's `.onHover`
         // and `.onTapGesture` would otherwise see nothing in that mode.
+        .animation(NotchMotion.morph, value: topRadius)
+        .animation(NotchMotion.morph, value: bottomRadius)
         .animation(NotchMotion.morph, value: viewModel.isExpanded)
     }
 }
@@ -182,35 +184,28 @@ private struct ExpandedContent: View {
 
     @ViewBuilder
     private var paneContent: some View {
-        // Both panes use the same tiny horizontal offset (4pt) plus an
-        // opacity fade. SwiftUI applies the active animation
-        // (`NotchMotion.tab` — system `.snappy`) to both insertion and
-        // removal symmetrically, so the swap reads as a single quick slide
-        // rather than a fade-and-then-slide. 4pt is barely visible but
-        // gives the eye a direction cue.
-        switch viewModel.selectedPane {
-        case .sessions:
-            sessionsPane
-                .transition(
-                    .opacity
-                        .combined(with: .move(edge: .leading))
-                        .animation(NotchMotion.tab)
-                )
-        case .recents:
-            recentsPane
-                .transition(
-                    .opacity
-                        .combined(with: .move(edge: .trailing))
-                        .animation(NotchMotion.tab)
-                )
-        case .spend:
-            spendPane
-                .transition(
-                    .opacity
-                        .combined(with: .move(edge: .trailing))
-                        .animation(NotchMotion.tab)
-                )
+        // Directional transition: the entering pane slides in from the
+        // direction you're navigating toward, and the exiting pane slides
+        // out the opposite way — like a camera panning along a horizontal
+        // strip of [Sessions | Recents | Spend].
+        let insertionEdge: Edge = viewModel.tabDirection == .forward ? .trailing : .leading
+        let removalEdge: Edge = viewModel.tabDirection == .forward ? .leading : .trailing
+
+        Group {
+            switch viewModel.selectedPane {
+            case .sessions: sessionsPane
+            case .recents:  recentsPane
+            case .spend:    spendPane
+            }
         }
+        .id(viewModel.selectedPane)
+        .transition(
+            .asymmetric(
+                insertion: .opacity.combined(with: .move(edge: insertionEdge)),
+                removal: .opacity.combined(with: .move(edge: removalEdge))
+            )
+            .animation(NotchMotion.tab)
+        )
     }
 
     private var sessionsPane: some View {
@@ -276,11 +271,17 @@ private struct ExpandedContent: View {
         ScrollView(.vertical, showsIndicators: false) {
             VStack(alignment: .leading, spacing: 10) {
                 let summary = viewModel.spendSummary
+                SpendTimeframePicker(
+                    selected: viewModel.selectedSpendTimeframe,
+                    onSelect: { viewModel.selectSpendTimeframe($0) }
+                )
+                .padding(.horizontal, Self.edgeInset)
+
                 if summary.snapshots.isEmpty {
                     EmptyState(
                         icon: "chart.bar.xaxis",
                         title: "No spend yet",
-                        subtitle: "No usage snapshots were found."
+                        subtitle: "No usage snapshots in \(summary.timeframe.title.lowercased())."
                     )
                     .frame(maxWidth: .infinity)
                     .padding(.top, 40)
@@ -303,6 +304,7 @@ private struct ExpandedContent: View {
             }
             .padding(.bottom, 18)
             .animation(NotchMotion.row, value: viewModel.usageSnapshots.map(\.id))
+            .animation(NotchMotion.tab, value: viewModel.selectedSpendTimeframe)
         }
         .scrollContentBackground(.hidden)
         .frame(maxHeight: .infinity)
@@ -329,11 +331,13 @@ private struct PaneTabBar: View {
             )
             tab(
                 .recents,
-                count: recentsCount
+                count: recentsCount,
+                showsCount: false
             )
             tab(
                 .spend,
-                count: spendCount
+                count: spendCount,
+                showsCount: false
             )
             Spacer(minLength: 0)
         }
@@ -344,7 +348,8 @@ private struct PaneTabBar: View {
         _ pane: NotchPane,
         count: Int,
         accentCount: Int = 0,
-        accentColor: Color = NotchPalette.active
+        accentColor: Color = NotchPalette.active,
+        showsCount: Bool = true
     ) -> some View {
         let isSelected = pane == selected
         Button {
@@ -358,7 +363,7 @@ private struct PaneTabBar: View {
 
                 if accentCount > 0 {
                     TabBadge(value: accentCount, tint: accentColor, prominent: true)
-                } else if count > 0 {
+                } else if showsCount, count > 0 {
                     TabBadge(
                         value: count,
                         tint: .white,
@@ -367,8 +372,9 @@ private struct PaneTabBar: View {
                     )
                 }
             }
+            .frame(minWidth: 78, minHeight: 24)
             .padding(.horizontal, 10)
-            .padding(.vertical, 5)
+            .padding(.vertical, 4)
             .background {
                 Capsule(style: .continuous)
                     .fill(.white.opacity(isSelected ? 0.10 : 0.0))
@@ -377,9 +383,10 @@ private struct PaneTabBar: View {
                             .stroke(.white.opacity(isSelected ? 0.10 : 0.0), lineWidth: 0.5)
                     )
             }
-            .contentShape(Capsule(style: .continuous))
         }
         .buttonStyle(.plain)
+        .contentShape(Capsule(style: .continuous))
+        .frame(minWidth: 98, minHeight: 32)
         .animation(NotchMotion.hover, value: isSelected)
     }
 }
@@ -998,10 +1005,45 @@ private struct SpendOverview: View {
                 detail: "Observed"
             )
             SpendMetric(
-                title: "Sessions",
+                title: "Events",
                 value: "\(summary.snapshots.count)",
-                detail: "30 days"
+                detail: summary.timeframe.title
             )
+        }
+    }
+}
+
+private struct SpendTimeframePicker: View {
+    let selected: SpendTimeframe
+    let onSelect: (SpendTimeframe) -> Void
+
+    var body: some View {
+        HStack(spacing: 5) {
+            Spacer(minLength: 0)
+
+            ForEach(SpendTimeframe.allCases) { timeframe in
+                let isSelected = timeframe == selected
+                Button {
+                    onSelect(timeframe)
+                } label: {
+                    Text(timeframe.shortLabel)
+                        .font(.system(size: 10, weight: .bold, design: .rounded))
+                        .monospacedDigit()
+                        .foregroundStyle(isSelected ? .white.opacity(0.94) : .white.opacity(0.44))
+                        .frame(width: 28, height: 28)
+                        .background {
+                            Circle()
+                                .fill(.white.opacity(isSelected ? 0.12 : 0.0))
+                                .overlay(
+                                    Circle()
+                                        .stroke(.white.opacity(isSelected ? 0.14 : 0.06), lineWidth: 0.5)
+                                )
+                        }
+                }
+                .buttonStyle(.plain)
+                .contentShape(Circle())
+                .animation(NotchMotion.hover, value: isSelected)
+            }
         }
     }
 }

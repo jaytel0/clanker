@@ -23,14 +23,21 @@ enum NotchPane: String, CaseIterable, Identifiable, Sendable {
     }
 }
 
+enum TabDirection {
+    case forward  // moving right (higher index)
+    case backward // moving left (lower index)
+}
+
 @MainActor
 final class NotchViewModel: ObservableObject {
     @Published var isExpanded = false
     @Published var isHovering = false
     @Published var selectedPane: NotchPane = .sessions
+    @Published private(set) var tabDirection: TabDirection = .forward
     @Published private(set) var sessions: [AgentSession] = []
     @Published private(set) var recents: [RecentProject] = []
     @Published private(set) var usageSnapshots: [HarnessUsageSnapshot] = []
+    @Published var selectedSpendTimeframe: SpendTimeframe = .last30Days
 
     /// Set by the controller so the view knows which display type is active.
     @Published var screenHasNotch = false
@@ -144,7 +151,7 @@ final class NotchViewModel: ObservableObject {
     }
 
     var spendSummary: SpendSummary {
-        SpendSummary(snapshots: usageSnapshots)
+        SpendSummary(snapshots: usageSnapshots, timeframe: selectedSpendTimeframe)
     }
 
     // MARK: - Intent
@@ -169,8 +176,18 @@ final class NotchViewModel: ObservableObject {
     /// minimal overshoot, no perceptible settle.
     func selectPane(_ pane: NotchPane) {
         guard pane != selectedPane else { return }
+        let oldIndex = NotchPane.allCases.firstIndex(of: selectedPane)!
+        let newIndex = NotchPane.allCases.firstIndex(of: pane)!
+        tabDirection = newIndex > oldIndex ? .forward : .backward
         withAnimation(NotchMotion.tab) {
             selectedPane = pane
+        }
+    }
+
+    func selectSpendTimeframe(_ timeframe: SpendTimeframe) {
+        guard timeframe != selectedSpendTimeframe else { return }
+        withAnimation(NotchMotion.tab) {
+            selectedSpendTimeframe = timeframe
         }
     }
 
