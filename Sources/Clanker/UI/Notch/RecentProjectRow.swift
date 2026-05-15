@@ -2,10 +2,10 @@ import SwiftUI
 
 /// One row inside the notch's "Recent" section.
 ///
-/// Whole-row click = primary action (open in the preferred terminal). Hover reveals a small
-/// trailing cluster of secondary actions (Finder, GitHub). Keeping the row's
-/// resting state visually quiet preserves the clean look of the notch when
-/// it first expands.
+/// Primary click opens the project in the preferred terminal. Hover reveals a
+/// small trailing cluster of secondary actions (Finder, GitHub). Keeping the
+/// row's resting state visually quiet preserves the clean look of the notch
+/// when it first expands.
 struct RecentProjectRow: View {
     let project: RecentProject
     let onPrimary: () -> Void
@@ -26,19 +26,12 @@ struct RecentProjectRow: View {
             actionCluster
                 .padding(.trailing, 8)
         }
-        .background(rowBackground)
-        .overlay(alignment: .leading) {
-            if project.hasActiveSession {
-                Capsule(style: .continuous)
-                    .fill(NotchPalette.active)
-                    .frame(width: 2.5)
-                    .padding(.vertical, 9)
-                    .shadow(color: NotchPalette.active.opacity(0.6), radius: 4)
-            }
-        }
-        .scaleEffect(hovering ? 1.012 : 1.0)
+        .notchRowChrome(
+            hovering: hovering,
+            accentColor: project.hasActiveSession ? NotchPalette.active : nil,
+            restingOpacity: 0.04
+        )
         .onHover { hovering = $0 }
-        .animation(NotchMotion.hover, value: hovering)
     }
 
     private var primaryContent: some View {
@@ -96,15 +89,6 @@ struct RecentProjectRow: View {
         }
         .opacity(hovering ? 1.0 : 0.55)
         .animation(NotchMotion.hover, value: hovering)
-    }
-
-    private var rowBackground: some View {
-        let shape = RoundedRectangle(cornerRadius: 9, style: .continuous)
-        let opacity: Double = hovering ? 0.07 : 0.04
-        return ZStack {
-            shape.fill(.white.opacity(opacity))
-            shape.stroke(.white.opacity(0.05), lineWidth: 0.5)
-        }
     }
 
     private func abbreviatePath(_ path: String) -> String {

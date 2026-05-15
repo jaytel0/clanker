@@ -65,4 +65,48 @@ final class HarnessUsageCacheTests: XCTestCase {
         let mtimesJSON = try XCTUnwrap(JSONSerialization.jsonObject(with: mtimesData) as? [String: Any])
         XCTAssertEqual(mtimesJSON["schemaVersion"] as? Int, 1)
     }
+
+    func testLoadsLegacyRawCacheFilesWithSecondsSince1970Dates() throws {
+        let cacheDirectory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("ClankerTests-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: cacheDirectory) }
+        try FileManager.default.createDirectory(at: cacheDirectory, withIntermediateDirectories: true)
+
+        let observedAt = Date(timeIntervalSince1970: 1_713_222_333.5)
+        let modifiedAt = Date(timeIntervalSince1970: 1_713_222_444.25)
+        let sourcePath = "/tmp/legacy-clanker-session.jsonl"
+        let snapshotPayload: [[String: Any]] = [[
+            "id": "legacy-usage-1",
+            "harness": "pi",
+            "sessionID": "legacy-session-1",
+            "projectName": "legacy",
+            "cwd": "/tmp/legacy",
+            "tokensInput": 11,
+            "tokensOutput": 22,
+            "tokensTotal": 33,
+            "costUSD": "0.0456",
+            "costSource": "reported",
+            "observedAt": observedAt.timeIntervalSince1970,
+            "sourcePath": sourcePath
+        ]]
+        let mtimesPayload: [String: Any] = [
+            sourcePath: modifiedAt.timeIntervalSince1970
+        ]
+
+        try JSONSerialization.data(withJSONObject: snapshotPayload)
+            .write(to: cacheDirectory.appendingPathComponent("spend_snapshots.json"))
+        try JSONSerialization.data(withJSONObject: mtimesPayload)
+            .write(to: cacheDirectory.appendingPathComponent("spend_mtimes.json"))
+
+        let cache = HarnessUsageCache(cacheDir: cacheDirectory)
+        let loadedSnapshot = try XCTUnwrap(cache.load().first)
+        let loadedMtime = try XCTUnwrap(cache.loadMtimes()[sourcePath])
+
+        XCTAssertEqual(loadedSnapshot.id, "legacy-usage-1")
+        XCTAssertEqual(loadedSnapshot.harness, .pi)
+        XCTAssertEqual(loadedSnapshot.tokens.total, 33)
+        XCTAssertEqual(loadedSnapshot.costUSD, Decimal(string: "0.0456"))
+        XCTAssertEqual(loadedSnapshot.observedAt.timeIntervalSince1970, observedAt.timeIntervalSince1970, accuracy: 0.001)
+        XCTAssertEqual(loadedMtime.timeIntervalSince1970, modifiedAt.timeIntervalSince1970, accuracy: 0.001)
+    }
 }

@@ -84,27 +84,13 @@ private struct DiscoveredSession: Sendable {
     }
 
     var closeCapability: SessionCloseCapability {
-        guard isLive else { return .none }
-        if canCloseTerminalSession {
-            return .terminalSession
-        }
-        if pid != nil, sourceKind == .process {
-            return .processGroup
-        }
-        return .none
-    }
-
-    private var canCloseTerminalSession: Bool {
-        guard let terminalName, let terminal = TerminalApp.match(terminalName) else {
-            return false
-        }
-
-        switch terminal {
-        case .terminal, .iterm:
-            return tty?.isEmpty == false
-        case .ghostty, .warp, .wezterm, .kitty, .alacritty:
-            return true
-        }
+        SessionCloseCapabilityResolver.capability(
+            isLive: isLive,
+            isProcessSource: sourceKind == .process,
+            pid: pid,
+            terminalName: terminalName,
+            tty: tty
+        )
     }
 
     func asAgentSession() -> AgentSession {

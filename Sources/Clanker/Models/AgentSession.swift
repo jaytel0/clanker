@@ -81,14 +81,6 @@ enum SessionCloseCapability: String, Sendable {
     var requiresConfirmation: Bool {
         self == .processGroup
     }
-
-    var helpTitle: String {
-        switch self {
-        case .none: "Session cannot be closed from Clanker"
-        case .terminalSession: "Close terminal session"
-        case .processGroup: "Terminate process group"
-        }
-    }
 }
 
 struct AgentSession: Identifiable, Equatable, Sendable {

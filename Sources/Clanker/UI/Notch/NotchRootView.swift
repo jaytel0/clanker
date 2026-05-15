@@ -931,17 +931,14 @@ private struct SessionRow: View {
                 .transition(.opacity)
             }
         }
-        .background(rowBackground)
-        .overlay(alignment: .leading) {
-            if session.needsAttention {
-                Capsule(style: .continuous)
-                    .fill(NotchPalette.attention)
-                    .frame(width: 2.5)
-                    .padding(.vertical, 9)
-                    .shadow(color: NotchPalette.attention.opacity(0.7), radius: 4)
-            }
-        }
-        .scaleEffect(hovering ? 1.012 : 1.0)
+        .notchRowChrome(
+            hovering: hovering,
+            accentColor: session.needsAttention ? NotchPalette.attention : nil,
+            restingOpacity: 0.045,
+            accentedRestingOpacity: 0.085,
+            showsAccentWash: session.needsAttention,
+            accentShadowOpacity: 0.7
+        )
         .onHover { hovering = $0 }
         .alert("Terminate process group?", isPresented: $showingCloseConfirmation) {
             Button("Cancel", role: .cancel) {}
@@ -951,7 +948,6 @@ private struct SessionRow: View {
         } message: {
             Text("Clanker could not close this through a terminal tab. Terminating sends SIGTERM to the owned process group.")
         }
-        .animation(NotchMotion.hover, value: hovering)
     }
 
     private var showCwd: Bool {
@@ -996,35 +992,6 @@ private struct SessionRow: View {
         return "Focus terminal"
     }
 
-    private var rowBackground: some View {
-        let shape = RoundedRectangle(cornerRadius: 9, style: .continuous)
-        let baseOpacity: Double = {
-            if session.needsAttention { return 0.085 }
-            if hovering { return 0.07 }
-            return 0.045
-        }()
-
-        return ZStack {
-            shape.fill(.white.opacity(baseOpacity))
-
-            if session.needsAttention {
-                shape
-                    .fill(
-                        LinearGradient(
-                            colors: [
-                                NotchPalette.attention.opacity(0.10),
-                                NotchPalette.attention.opacity(0.0)
-                            ],
-                            startPoint: .leading,
-                            endPoint: .trailing
-                        )
-                    )
-            }
-
-            shape.stroke(.white.opacity(0.05), lineWidth: 0.5)
-        }
-    }
-
     private func handleCloseTap() {
         if session.closeCapability.requiresConfirmation {
             showingCloseConfirmation = true
@@ -1053,8 +1020,18 @@ private struct SessionCloseButton: View {
         }
         .buttonStyle(.plain)
         .onHover { hovering = $0 }
-        .help(capability.helpTitle)
+        .help(capability.closeHelpTitle)
         .animation(NotchMotion.hover, value: hovering)
+    }
+}
+
+private extension SessionCloseCapability {
+    var closeHelpTitle: String {
+        switch self {
+        case .none: "Session cannot be closed from Clanker"
+        case .terminalSession: "Close terminal session"
+        case .processGroup: "Terminate process group"
+        }
     }
 }
 

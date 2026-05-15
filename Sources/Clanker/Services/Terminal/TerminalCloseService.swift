@@ -2,6 +2,38 @@ import AppKit
 import ApplicationServices
 import Darwin
 
+enum SessionCloseCapabilityResolver {
+    static func capability(
+        isLive: Bool,
+        isProcessSource: Bool,
+        pid: Int?,
+        terminalName: String?,
+        tty: String?
+    ) -> SessionCloseCapability {
+        guard isLive else { return .none }
+        if supportsTerminalClose(terminalName: terminalName, tty: tty) {
+            return .terminalSession
+        }
+        if isProcessSource, pid != nil {
+            return .processGroup
+        }
+        return .none
+    }
+
+    static func supportsTerminalClose(terminalName: String?, tty: String?) -> Bool {
+        guard let terminalName, let terminal = TerminalApp.match(terminalName) else {
+            return false
+        }
+
+        switch terminal {
+        case .terminal, .iterm:
+            return tty?.isEmpty == false
+        case .ghostty, .warp, .wezterm, .kitty, .alacritty:
+            return true
+        }
+    }
+}
+
 /// Closes the terminal window/tab backing a session.
 ///
 /// Strategy:
