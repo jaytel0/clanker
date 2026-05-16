@@ -33,3 +33,4 @@ diagnostics/
 .env
 .env.*
 Config/LocalSecrets.xcconfig
+.release-secrets/

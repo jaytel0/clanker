@@ -5,7 +5,8 @@ MODE="${1:-run}"
 APP_NAME="Clanker"
 BUNDLE_ID="dev.clanker.app"
 MIN_SYSTEM_VERSION="14.0"
-SIGN_IDENTITY="Developer ID Application: Jaytel Provence (N6S323FR6Q)"
+SIGN_IDENTITY="${SIGN_IDENTITY:-Developer ID Application: Jaytel Provence (N6S323FR6Q)}"
+NOTARY_PROFILE="${NOTARY_PROFILE:-clanker-notary}"
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 VERSION="$(cat "$ROOT_DIR/VERSION" | tr -d '[:space:]')"
@@ -16,12 +17,125 @@ APP_CONTENTS="$APP_BUNDLE/Contents"
 APP_MACOS="$APP_CONTENTS/MacOS"
 APP_BINARY="$APP_MACOS/$APP_NAME"
 INFO_PLIST="$APP_CONTENTS/Info.plist"
+ENTITLEMENTS="$ROOT_DIR/script/Clanker.entitlements"
+SIGN_KEYCHAIN="${SIGN_KEYCHAIN:-$ROOT_DIR/.release-secrets/clanker-signing.keychain-db}"
+SIGN_KEYCHAIN_PASSWORD_FILE="${SIGN_KEYCHAIN_PASSWORD_FILE:-$ROOT_DIR/.release-secrets/clanker-signing.keychain-password}"
+NOTARY_KEYCHAIN="${NOTARY_KEYCHAIN:-$SIGN_KEYCHAIN}"
+
+is_release_mode() {
+  case "$MODE" in
+    --install|install|--release|release|--notarize|notarize)
+      return 0
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
+is_distribution_mode() {
+  case "$MODE" in
+    --release|release|--notarize|notarize)
+      return 0
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
+has_signing_identity() {
+  local keychain_args=()
+
+  if [[ -f "$SIGN_KEYCHAIN" ]]; then
+    keychain_args=("$SIGN_KEYCHAIN")
+  fi
+
+  security find-identity -v -p codesigning "${keychain_args[@]}" 2>/dev/null | grep -qF "$SIGN_IDENTITY"
+}
+
+require_developer_id_identity() {
+  if [[ "$SIGN_IDENTITY" != Developer\ ID\ Application:* ]]; then
+    echo "error: distribution builds must use a Developer ID Application identity" >&2
+    echo "       current identity: $SIGN_IDENTITY" >&2
+    return 1
+  fi
+}
+
+unlock_signing_keychain() {
+  if [[ -f "$SIGN_KEYCHAIN" && -f "$SIGN_KEYCHAIN_PASSWORD_FILE" ]]; then
+    local keychain
+    local keychains=()
+    local found=0
+
+    while IFS= read -r keychain; do
+      keychain="${keychain#    \"}"
+      keychain="${keychain#\"}"
+      keychain="${keychain%\"}"
+      if [[ -n "$keychain" ]]; then
+        keychains+=("$keychain")
+        [[ "$keychain" == "$SIGN_KEYCHAIN" ]] && found=1
+      fi
+    done < <(security list-keychains -d user)
+
+    if [[ "$found" -eq 0 ]]; then
+      security list-keychains -d user -s "$SIGN_KEYCHAIN" "${keychains[@]}"
+    fi
+
+    security unlock-keychain -p "$(cat "$SIGN_KEYCHAIN_PASSWORD_FILE")" "$SIGN_KEYCHAIN"
+  fi
+}
+
+sign_app() {
+  local bundle="$1"
+  local keychain_args=()
+
+  unlock_signing_keychain
+
+  if ! has_signing_identity; then
+    echo "error: signing identity not found: $SIGN_IDENTITY" >&2
+    return 1
+  fi
+
+  if [[ -f "$SIGN_KEYCHAIN" ]]; then
+    keychain_args=(--keychain "$SIGN_KEYCHAIN")
+  fi
+
+  codesign --force --deep --timestamp --options runtime \
+    --entitlements "$ENTITLEMENTS" \
+    "${keychain_args[@]}" \
+    --sign "$SIGN_IDENTITY" \
+    "$bundle"
+
+  codesign --verify --deep --strict --verbose=2 "$bundle"
+}
+
+zip_app() {
+  local app_path="$1"
+  local zip_path="$2"
+  local app_parent
+  local app_name
+
+  app_parent="$(dirname "$app_path")"
+  app_name="$(basename "$app_path")"
+  rm -f "$zip_path"
+  (cd "$app_parent" && ditto -c -k --keepParent "$app_name" "$zip_path")
+}
+
+if is_distribution_mode; then
+  require_developer_id_identity
+  unlock_signing_keychain
+  if ! has_signing_identity; then
+    echo "error: signing identity not found: $SIGN_IDENTITY" >&2
+    exit 1
+  fi
+fi
 
 pkill -x "$APP_NAME" >/dev/null 2>&1 || true
-pkill -f "codex app-server --listen ws://127.0.0.1:41241" >/dev/null 2>&1 || true
+pkill -f "[c]odex app-server --listen ws://127.0.0.1:41241" >/dev/null 2>&1 || true
 
 # Release for install/release modes, debug otherwise
-if [[ "$MODE" == "--install" || "$MODE" == "install" || "$MODE" == "--release" || "$MODE" == "release" ]]; then
+if is_release_mode; then
   BUILD_FLAGS="-c release"
 else
   BUILD_FLAGS=""
@@ -86,10 +200,12 @@ cat >"$INFO_PLIST" <<PLIST
 PLIST
 
 # Sign the bundle so macOS can track Accessibility permissions by signing
-# identity rather than binary hash. Without this, permissions are revoked
-# on every rebuild because the binary hash changes.
-if security find-identity -v -p codesigning 2>/dev/null | grep -qF "$SIGN_IDENTITY"; then
-  codesign --force --deep --sign "$SIGN_IDENTITY" "$APP_BUNDLE"
+# identity rather than binary hash. Release modes require Developer ID signing
+# because they are intended for distribution and notarization.
+if is_release_mode; then
+  sign_app "$APP_BUNDLE"
+elif has_signing_identity; then
+  sign_app "$APP_BUNDLE"
 else
   echo "⚠️  Signing identity not found — skipping codesign (Accessibility prompts may recur)"
 fi
@@ -122,29 +238,45 @@ case "$MODE" in
     rm -rf "$INSTALL_BUNDLE"
     cp -R "$APP_BUNDLE" "$INSTALL_BUNDLE"
     # Re-sign at the installed path (codesign is path-sensitive)
-    if security find-identity -v -p codesigning 2>/dev/null | grep -qF "$SIGN_IDENTITY"; then
-      codesign --force --deep --sign "$SIGN_IDENTITY" "$INSTALL_BUNDLE"
-    fi
+    sign_app "$INSTALL_BUNDLE"
     /usr/bin/open -n "$INSTALL_BUNDLE"
     sleep 1
     pgrep -x "$APP_NAME" >/dev/null
     ;;
-  --release|release)
+  --release|release|--notarize|notarize)
     RELEASE_DIR="$ROOT_DIR/release"
     mkdir -p "$RELEASE_DIR"
     RELEASE_APP="$RELEASE_DIR/$APP_NAME.app"
+    RELEASE_ZIP="$RELEASE_DIR/$APP_NAME-$VERSION.zip"
     rm -rf "$RELEASE_APP"
     cp -R "$APP_BUNDLE" "$RELEASE_APP"
-    if security find-identity -v -p codesigning 2>/dev/null | grep -qF "$SIGN_IDENTITY"; then
-      codesign --force --deep --sign "$SIGN_IDENTITY" "$RELEASE_APP"
+
+    sign_app "$RELEASE_APP"
+    zip_app "$RELEASE_APP" "$RELEASE_ZIP"
+
+    if [[ "$MODE" == "--notarize" || "$MODE" == "notarize" ]]; then
+      notary_keychain_args=()
+      if [[ -f "$NOTARY_KEYCHAIN" ]]; then
+        unlock_signing_keychain
+        notary_keychain_args=(--keychain "$NOTARY_KEYCHAIN")
+      fi
+
+      xcrun notarytool submit "$RELEASE_ZIP" \
+        --keychain-profile "$NOTARY_PROFILE" \
+        "${notary_keychain_args[@]}" \
+        --wait \
+        --timeout 30m
+
+      xcrun stapler staple "$RELEASE_APP"
+      xcrun stapler validate "$RELEASE_APP"
+      spctl --assess --type execute --verbose=4 "$RELEASE_APP"
+      zip_app "$RELEASE_APP" "$RELEASE_ZIP"
     fi
-    # Create a zip for distribution
-    cd "$RELEASE_DIR"
-    zip -r "$APP_NAME-$VERSION.zip" "$APP_NAME.app"
-    echo "✅  Release built: $RELEASE_DIR/$APP_NAME-$VERSION.zip"
+
+    echo "✅  Release built: $RELEASE_ZIP"
     ;;
   *)
-    echo "usage: $0 [run|install|release|--debug|--logs|--telemetry|--verify]" >&2
+    echo "usage: $0 [run|install|release|notarize|--debug|--logs|--telemetry|--verify]" >&2
     exit 2
     ;;
 esac
