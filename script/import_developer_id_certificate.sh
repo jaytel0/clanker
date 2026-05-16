@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
 CERT_PATH="${1:?usage: $0 path/to/developer_id_application.cer}"
 KEY_PATH="${KEY_PATH:-$ROOT_DIR/.release-secrets/clanker-developer-id.key}"
 KEYCHAIN="${SIGN_KEYCHAIN:-$ROOT_DIR/.release-secrets/clanker-signing.keychain-db}"

@@ -8,7 +8,7 @@ MIN_SYSTEM_VERSION="14.0"
 SIGN_IDENTITY="${SIGN_IDENTITY:-Developer ID Application: Jaytel Provence (N6S323FR6Q)}"
 NOTARY_PROFILE="${NOTARY_PROFILE:-clanker-notary}"
 
-ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
 VERSION="$(cat "$ROOT_DIR/VERSION" | tr -d '[:space:]')"
 DIST_DIR="$ROOT_DIR/dist"
 APP_BUNDLE="$DIST_DIR/$APP_NAME.app"
