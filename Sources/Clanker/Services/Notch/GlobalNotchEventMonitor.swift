@@ -130,6 +130,9 @@ final class GlobalNotchEventMonitor {
         case "2":
             viewModel.selectPane(.recents)
             return true
+        case "3":
+            viewModel.selectPane(.spend)
+            return true
         default:
             return false
         }

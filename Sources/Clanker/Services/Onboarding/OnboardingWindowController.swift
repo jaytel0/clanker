@@ -48,9 +48,7 @@ final class OnboardingWindowController: NSWindowController {
 
     private func finish(roots: [String]) {
         let settings = RecentsSettings.shared
-        if !roots.isEmpty {
-            settings.roots = roots
-        }
+        settings.roots = roots
         settings.hasCompletedSetup = true
         onFinish?(roots)
         close()

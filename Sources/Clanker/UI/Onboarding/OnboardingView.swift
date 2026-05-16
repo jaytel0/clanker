@@ -20,61 +20,21 @@ struct SuggestedRoot: Identifiable {
 // MARK: - Scanner
 
 enum OnboardingScanner {
-    /// Returns the folders we think are developer roots, pre-sorted and
-    /// pre-selected if they contain at least one git repo.
-    static func suggestedRoots() -> [SuggestedRoot] {
-        let home = NSHomeDirectory()
-        let fm = FileManager.default
-
-        // Candidate paths — ordered by how likely they are to be useful
-        var candidates: [String] = []
-
-        // 1. Subdirectories of ~/Developer (personal, shopify, work, oss, tries…)
-        let developerDir = (home as NSString).appendingPathComponent("Developer")
-        if let subs = try? fm.contentsOfDirectory(atPath: developerDir) {
-            for sub in subs.sorted() where !sub.hasPrefix(".") {
-                candidates.append((developerDir as NSString).appendingPathComponent(sub))
-            }
+    /// Returns the only default project root Clanker suggests: `~/Developer`,
+    /// pre-selected when that folder exists.
+    static func suggestedRoots(
+        home: String = NSHomeDirectory(),
+        fileManager: FileManager = .default
+    ) -> [SuggestedRoot] {
+        let developerDir = ((home as NSString).appendingPathComponent("Developer") as NSString)
+            .standardizingPath
+        var isDir: ObjCBool = false
+        guard fileManager.fileExists(atPath: developerDir, isDirectory: &isDir),
+              isDir.boolValue else {
+            return []
         }
 
-        // 2. ~/Developer itself (flat layout — all repos directly inside)
-        candidates.append(developerDir)
-
-        // 3. Other common roots
-        for name in ["code", "repos", "projects", "src", "work"] {
-            candidates.append((home as NSString).appendingPathComponent(name))
-        }
-
-        var seen = Set<String>()
-        var results: [SuggestedRoot] = []
-
-        for path in candidates {
-            let normalized = (path as NSString).standardizingPath
-            guard seen.insert(normalized).inserted else { continue }
-            var isDir: ObjCBool = false
-            guard fm.fileExists(atPath: normalized, isDirectory: &isDir), isDir.boolValue else { continue }
-
-            let hasGit = hasAnyGitRepo(at: normalized)
-            results.append(SuggestedRoot(path: normalized, isSelected: hasGit))
-        }
-
-        // Show selected first, then the rest alphabetically
-        return results.sorted {
-            if $0.isSelected != $1.isSelected { return $0.isSelected }
-            return $0.path < $1.path
-        }
-    }
-
-    private static func hasAnyGitRepo(at root: String) -> Bool {
-        guard let entries = try? FileManager.default.contentsOfDirectory(atPath: root) else {
-            return false
-        }
-        return entries.contains { entry in
-            let gitPath = (root as NSString)
-                .appendingPathComponent(entry)
-                .appending("/.git")
-            return FileManager.default.fileExists(atPath: gitPath)
-        }
+        return [SuggestedRoot(path: developerDir, isSelected: true)]
     }
 }
 

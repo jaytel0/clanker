@@ -18,7 +18,7 @@ final class RecentsSettings: ObservableObject {
         static let preferredTerminalBundleID = "recents.preferredTerminalBundleID"
     }
 
-    private static let currentDefaultRootsVersion = 1
+    private static let currentDefaultRootsVersion = 2
 
     /// Folders we walk for repos. Each direct child containing a `.git` entry
     /// is treated as a repo; the basename of the root becomes its category.
@@ -61,40 +61,32 @@ final class RecentsSettings: ObservableObject {
     init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
 
-        let defaultRoots = Self.defaultRoots()
-        var roots = (defaults.array(forKey: Key.roots) as? [String]) ?? defaultRoots
-        if defaults.integer(forKey: Key.defaultRootsVersion) < Self.currentDefaultRootsVersion {
-            roots = Self.appendingMissingRoots(
-                [
-                    (NSHomeDirectory() as NSString).appendingPathComponent("Developer/tries")
-                ],
-                to: roots
-            )
-            defaults.set(roots, forKey: Key.roots)
-            defaults.set(Self.currentDefaultRootsVersion, forKey: Key.defaultRootsVersion)
+        let hasCompletedSetup = defaults.bool(forKey: Key.hasCompletedSetup)
+        let storedRoots = defaults.array(forKey: Key.roots) as? [String]
+        var roots = storedRoots ?? Self.defaultRoots()
+        if !hasCompletedSetup,
+           defaults.integer(forKey: Key.defaultRootsVersion) < Self.currentDefaultRootsVersion {
+            roots = Self.defaultRoots()
         }
+        defaults.set(roots, forKey: Key.roots)
+        defaults.set(Self.currentDefaultRootsVersion, forKey: Key.defaultRootsVersion)
         self.roots = roots
 
         self.cdHookEnabled = defaults.bool(forKey: Key.cdHookEnabled)
-        self.hasCompletedSetup = defaults.bool(forKey: Key.hasCompletedSetup)
+        self.hasCompletedSetup = hasCompletedSetup
         self.preferredTerminalBundleID = defaults.string(forKey: Key.preferredTerminalBundleID)
     }
 
     private static func defaultRoots() -> [String] {
-        [
-            (NSHomeDirectory() as NSString).appendingPathComponent("Developer/personal"),
-            (NSHomeDirectory() as NSString).appendingPathComponent("Developer/shopify"),
-            (NSHomeDirectory() as NSString).appendingPathComponent("Developer/tries")
-        ]
-    }
-
-    private static func appendingMissingRoots(_ additions: [String], to roots: [String]) -> [String] {
-        var result = roots
-        let existing = Set(roots.map(normalizedPath))
-        for root in additions where !existing.contains(normalizedPath(root)) {
-            result.append(root)
+        let developerDir = normalizedPath(
+            (NSHomeDirectory() as NSString).appendingPathComponent("Developer")
+        )
+        var isDir: ObjCBool = false
+        guard FileManager.default.fileExists(atPath: developerDir, isDirectory: &isDir),
+              isDir.boolValue else {
+            return []
         }
-        return result
+        return [developerDir]
     }
 
     private static func normalizedPath(_ path: String) -> String {
