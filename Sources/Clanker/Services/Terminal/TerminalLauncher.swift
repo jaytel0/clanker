@@ -91,24 +91,11 @@ enum TerminalLauncher {
     /// Its bundled Finder service, however, reliably opens a new window at a
     /// supplied folder even when Ghostty is already running.
     private static func openGhostty(at path: String) -> Bool {
-        guard let appURL = TerminalApp.ghostty.appURL else { return false }
-        if performGhosttyNewWindowService(at: path) {
-            return true
-        }
-        return runOpen(arguments: ghosttyOpenArguments(appURL: appURL, path: path))
+        guard TerminalApp.ghostty.appURL != nil else { return false }
+        return performGhosttyNewWindowService(at: path)
     }
 
     nonisolated static let ghosttyNewWindowServiceName = "New Ghostty Window Here"
-
-    nonisolated static func ghosttyOpenArguments(appURL: URL, path: String) -> [String] {
-        [
-            "-n",
-            appURL.path,
-            "--args",
-            "--working-directory=\(path)",
-            "--window-inherit-working-directory=false"
-        ]
-    }
 
     private static func performGhosttyNewWindowService(at path: String) -> Bool {
         let pasteboard = NSPasteboard.general
@@ -198,21 +185,6 @@ enum TerminalLauncher {
                 activate(appURL: appURL)
             }
             return true
-        } catch {
-            return false
-        }
-    }
-
-    private static func runOpen(arguments: [String]) -> Bool {
-        let task = Process()
-        task.executableURL = URL(fileURLWithPath: "/usr/bin/open")
-        task.arguments = arguments
-        task.standardOutput = FileHandle.nullDevice
-        task.standardError = FileHandle.nullDevice
-        do {
-            try task.run()
-            task.waitUntilExit()
-            return task.terminationStatus == 0
         } catch {
             return false
         }
