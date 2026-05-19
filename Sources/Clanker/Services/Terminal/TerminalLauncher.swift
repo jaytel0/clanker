@@ -87,16 +87,79 @@ enum TerminalLauncher {
         return runAppleScript(source)
     }
 
-    /// Uses the CLI embedded in Ghostty.app. This opens a new window inside the
-    /// existing Ghostty instance (no duplicate dock icons), or launches Ghostty
-    /// if it is not already running.
+    /// Ghostty 1.2.x does not support its `+new-window` IPC action on macOS.
+    /// Its bundled Finder service, however, reliably opens a new window at a
+    /// supplied folder even when Ghostty is already running.
     private static func openGhostty(at path: String) -> Bool {
-        runBundledExecutable(
-            app: .ghostty,
-            executableNames: ["ghostty"],
-            arguments: ["+new-window", "--working-directory=\(path)"],
-            activateAfterLaunch: true
-        )
+        guard let appURL = TerminalApp.ghostty.appURL else { return false }
+        if performGhosttyNewWindowService(at: path) {
+            return true
+        }
+        return runOpen(arguments: ghosttyOpenArguments(appURL: appURL, path: path))
+    }
+
+    nonisolated static let ghosttyNewWindowServiceName = "New Ghostty Window Here"
+
+    nonisolated static func ghosttyOpenArguments(appURL: URL, path: String) -> [String] {
+        [
+            "-n",
+            appURL.path,
+            "--args",
+            "--working-directory=\(path)",
+            "--window-inherit-working-directory=false"
+        ]
+    }
+
+    private static func performGhosttyNewWindowService(at path: String) -> Bool {
+        let pasteboard = NSPasteboard.general
+        let snapshot = PasteboardSnapshot.capture(pasteboard)
+        pasteboard.clearContents()
+
+        let url = NSURL(fileURLWithPath: path, isDirectory: true)
+        guard pasteboard.writeObjects([url]) else { return false }
+        let serviceChangeCount = pasteboard.changeCount
+        let didPerform = NSPerformService(ghosttyNewWindowServiceName, pasteboard)
+        if didPerform {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
+                if pasteboard.changeCount == serviceChangeCount {
+                    snapshot.restore(to: pasteboard)
+                }
+            }
+        } else {
+            snapshot.restore(to: pasteboard)
+        }
+        return didPerform
+    }
+
+    private struct PasteboardSnapshot {
+        let items: [[NSPasteboard.PasteboardType: Data]]
+
+        static func capture(_ pasteboard: NSPasteboard) -> PasteboardSnapshot {
+            let itemData: [[NSPasteboard.PasteboardType: Data]] = pasteboard.pasteboardItems?.map { item in
+                var values: [NSPasteboard.PasteboardType: Data] = [:]
+                for type in item.types {
+                    if let data = item.data(forType: type) {
+                        values[type] = data
+                    }
+                }
+                return values
+            } ?? []
+            return PasteboardSnapshot(items: itemData)
+        }
+
+        func restore(to pasteboard: NSPasteboard) {
+            pasteboard.clearContents()
+            let pasteboardItems = items.map { values in
+                let item = NSPasteboardItem()
+                for (type, data) in values {
+                    item.setData(data, forType: type)
+                }
+                return item
+            }
+            if !pasteboardItems.isEmpty {
+                pasteboard.writeObjects(pasteboardItems)
+            }
+        }
     }
 
     private static func openWarp(at path: String) -> Bool {
@@ -135,6 +198,21 @@ enum TerminalLauncher {
                 activate(appURL: appURL)
             }
             return true
+        } catch {
+            return false
+        }
+    }
+
+    private static func runOpen(arguments: [String]) -> Bool {
+        let task = Process()
+        task.executableURL = URL(fileURLWithPath: "/usr/bin/open")
+        task.arguments = arguments
+        task.standardOutput = FileHandle.nullDevice
+        task.standardError = FileHandle.nullDevice
+        do {
+            try task.run()
+            task.waitUntilExit()
+            return task.terminationStatus == 0
         } catch {
             return false
         }

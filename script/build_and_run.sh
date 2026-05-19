@@ -7,6 +7,10 @@ BUNDLE_ID="dev.clanker.app"
 MIN_SYSTEM_VERSION="14.0"
 SIGN_IDENTITY="${SIGN_IDENTITY:-Developer ID Application: Jaytel Provence (N6S323FR6Q)}"
 NOTARY_PROFILE="${NOTARY_PROFILE:-clanker-notary}"
+NOTARY_KEY_ID="${NOTARY_KEY_ID:-NH5ZQ992V7}"
+NOTARY_ISSUER_ID="${NOTARY_ISSUER_ID:-1efb7cca-9219-4513-86b4-57fe29e496a7}"
+NOTARY_SECRETS_REPO="${NOTARY_SECRETS_REPO:-jaytel0/secrets}"
+NOTARY_SECRETS_SUBDIR="${NOTARY_SECRETS_SUBDIR:-clanker/.release-secrets}"
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
 VERSION="$(cat "$ROOT_DIR/VERSION" | tr -d '[:space:]')"
@@ -21,6 +25,17 @@ ENTITLEMENTS="$ROOT_DIR/script/Clanker.entitlements"
 SIGN_KEYCHAIN="${SIGN_KEYCHAIN:-$ROOT_DIR/.release-secrets/clanker-signing.keychain-db}"
 SIGN_KEYCHAIN_PASSWORD_FILE="${SIGN_KEYCHAIN_PASSWORD_FILE:-$ROOT_DIR/.release-secrets/clanker-signing.keychain-password}"
 NOTARY_KEYCHAIN="${NOTARY_KEYCHAIN:-$SIGN_KEYCHAIN}"
+TEMP_PATHS=()
+
+cleanup() {
+  if [[ "${#TEMP_PATHS[@]}" -eq 0 ]]; then
+    return 0
+  fi
+  for path in "${TEMP_PATHS[@]}"; do
+    rm -rf "$path"
+  done
+}
+trap cleanup EXIT
 
 is_release_mode() {
   case "$MODE" in
@@ -45,13 +60,11 @@ is_distribution_mode() {
 }
 
 has_signing_identity() {
-  local keychain_args=()
-
   if [[ -f "$SIGN_KEYCHAIN" ]]; then
-    keychain_args=("$SIGN_KEYCHAIN")
+    security find-identity -v -p codesigning "$SIGN_KEYCHAIN" 2>/dev/null | grep -qF "$SIGN_IDENTITY"
+  else
+    security find-identity -v -p codesigning 2>/dev/null | grep -qF "$SIGN_IDENTITY"
   fi
-
-  security find-identity -v -p codesigning "${keychain_args[@]}" 2>/dev/null | grep -qF "$SIGN_IDENTITY"
 }
 
 require_developer_id_identity() {
@@ -79,16 +92,24 @@ unlock_signing_keychain() {
     done < <(security list-keychains -d user)
 
     if [[ "$found" -eq 0 ]]; then
-      security list-keychains -d user -s "$SIGN_KEYCHAIN" "${keychains[@]}"
+      if [[ "${#keychains[@]}" -eq 0 ]]; then
+        security list-keychains -d user -s "$SIGN_KEYCHAIN"
+      else
+        security list-keychains -d user -s "$SIGN_KEYCHAIN" "${keychains[@]}"
+      fi
     fi
 
     security unlock-keychain -p "$(cat "$SIGN_KEYCHAIN_PASSWORD_FILE")" "$SIGN_KEYCHAIN"
   fi
 }
 
+strip_quarantine() {
+  local bundle="$1"
+  xattr -dr com.apple.quarantine "$bundle" >/dev/null 2>&1 || true
+}
+
 sign_app() {
   local bundle="$1"
-  local keychain_args=()
 
   unlock_signing_keychain
 
@@ -98,14 +119,19 @@ sign_app() {
   fi
 
   if [[ -f "$SIGN_KEYCHAIN" ]]; then
-    keychain_args=(--keychain "$SIGN_KEYCHAIN")
+    strip_quarantine "$bundle"
+    codesign --force --deep --timestamp --options runtime \
+      --entitlements "$ENTITLEMENTS" \
+      --keychain "$SIGN_KEYCHAIN" \
+      --sign "$SIGN_IDENTITY" \
+      "$bundle"
+  else
+    strip_quarantine "$bundle"
+    codesign --force --deep --timestamp --options runtime \
+      --entitlements "$ENTITLEMENTS" \
+      --sign "$SIGN_IDENTITY" \
+      "$bundle"
   fi
-
-  codesign --force --deep --timestamp --options runtime \
-    --entitlements "$ENTITLEMENTS" \
-    "${keychain_args[@]}" \
-    --sign "$SIGN_IDENTITY" \
-    "$bundle"
 
   codesign --verify --deep --strict --verbose=2 "$bundle"
 }
@@ -122,6 +148,126 @@ zip_app() {
   (cd "$app_parent" && ditto -c -k --keepParent "$app_name" "$zip_path")
 }
 
+notary_key_path() {
+  if [[ -n "${NOTARY_KEY_PATH:-}" && -f "$NOTARY_KEY_PATH" ]]; then
+    printf '%s\n' "$NOTARY_KEY_PATH"
+    return 0
+  fi
+
+  local key_name="AuthKey_${NOTARY_KEY_ID}.p8"
+  local candidates=(
+    "$ROOT_DIR/.release-secrets/$key_name"
+    "$ROOT_DIR/../secrets/$NOTARY_SECRETS_SUBDIR/$key_name"
+    "$HOME/Developer/personal/secrets/$NOTARY_SECRETS_SUBDIR/$key_name"
+    "$HOME/Developer/secrets/$NOTARY_SECRETS_SUBDIR/$key_name"
+  )
+
+  local candidate
+  for candidate in "${candidates[@]}"; do
+    if [[ -f "$candidate" ]]; then
+      printf '%s\n' "$candidate"
+      return 0
+    fi
+  done
+
+  if command -v gh >/dev/null 2>&1; then
+    local clone_dir
+    clone_dir="$(mktemp -d "/tmp/${APP_NAME}-secrets.XXXXXX")"
+    TEMP_PATHS+=("$clone_dir")
+    if gh repo clone "$NOTARY_SECRETS_REPO" "$clone_dir" >/dev/null 2>&1; then
+      candidate="$clone_dir/$NOTARY_SECRETS_SUBDIR/$key_name"
+      if [[ -f "$candidate" ]]; then
+        printf '%s\n' "$candidate"
+        return 0
+      fi
+    fi
+  fi
+
+  return 1
+}
+
+notary_profile_is_available() {
+  if [[ -f "$NOTARY_KEYCHAIN" ]]; then
+    unlock_signing_keychain
+    xcrun notarytool history \
+      --keychain-profile "$NOTARY_PROFILE" \
+      --keychain "$NOTARY_KEYCHAIN" \
+      >/dev/null 2>&1
+  else
+    xcrun notarytool history \
+      --keychain-profile "$NOTARY_PROFILE" \
+      >/dev/null 2>&1
+  fi
+}
+
+submit_notarization() {
+  local zip_path="$1"
+
+  if notary_profile_is_available; then
+    if [[ -f "$NOTARY_KEYCHAIN" ]]; then
+      unlock_signing_keychain
+      xcrun notarytool submit "$zip_path" \
+        --keychain-profile "$NOTARY_PROFILE" \
+        --keychain "$NOTARY_KEYCHAIN" \
+        --wait \
+        --timeout 30m
+    else
+      xcrun notarytool submit "$zip_path" \
+        --keychain-profile "$NOTARY_PROFILE" \
+        --wait \
+        --timeout 30m
+    fi
+    return
+  fi
+
+  local key_path
+  if ! key_path="$(notary_key_path)"; then
+    echo "error: no notary profile or App Store Connect API key found" >&2
+    return 1
+  fi
+
+  xcrun notarytool submit "$zip_path" \
+    --key "$key_path" \
+    --key-id "$NOTARY_KEY_ID" \
+    --issuer "$NOTARY_ISSUER_ID" \
+    --wait \
+    --timeout 30m
+}
+
+notarize_app() {
+  local app_path="$1"
+
+  if [[ "${SKIP_NOTARIZE:-0}" == "1" ]]; then
+    echo "Skipping notarization because SKIP_NOTARIZE=1"
+    return 0
+  fi
+
+  local zip_path
+  zip_path="$(mktemp -t "${APP_NAME}-notary")"
+  rm -f "$zip_path"
+  zip_path="$zip_path.zip"
+  TEMP_PATHS+=("$zip_path")
+
+  zip_app "$app_path" "$zip_path"
+  submit_notarization "$zip_path"
+  xcrun stapler staple "$app_path"
+  xcrun stapler validate "$app_path"
+  spctl --assess --type execute --verbose=4 "$app_path"
+}
+
+install_bundle_preserving_container() {
+  local source_bundle="$1"
+  local target_bundle="$2"
+
+  if [[ -d "$target_bundle" ]]; then
+    mkdir -p "$target_bundle"
+    rm -rf "$target_bundle/Contents"
+    cp -R "$source_bundle/Contents" "$target_bundle/Contents"
+  else
+    cp -R "$source_bundle" "$target_bundle"
+  fi
+}
+
 if is_distribution_mode; then
   require_developer_id_identity
   unlock_signing_keychain
@@ -134,7 +280,7 @@ fi
 pkill -x "$APP_NAME" >/dev/null 2>&1 || true
 pkill -f "[c]odex app-server --listen ws://127.0.0.1:41241" >/dev/null 2>&1 || true
 
-# Release for install/release modes, debug otherwise
+# Release for install/release modes, debug otherwise.
 if is_release_mode; then
   BUILD_FLAGS="-c release"
 else
@@ -145,7 +291,10 @@ swift build --package-path "$ROOT_DIR" $BUILD_FLAGS
 BUILD_BIN_DIR="$(swift build --package-path "$ROOT_DIR" $BUILD_FLAGS --show-bin-path)"
 BUILD_BINARY="$BUILD_BIN_DIR/$APP_NAME"
 
-rm -rf "$APP_BUNDLE"
+# Preserve the .app directory itself so macOS privacy/TCC metadata attached to
+# the bundle container is not discarded on every rebuild.
+mkdir -p "$APP_BUNDLE"
+rm -rf "$APP_CONTENTS"
 mkdir -p "$APP_MACOS"
 cp "$BUILD_BINARY" "$APP_BINARY"
 chmod +x "$APP_BINARY"
@@ -161,8 +310,8 @@ for bundle in "$BUILD_BIN_DIR"/*.bundle; do
 done
 shopt -u nullglob
 
-# Copy app icon
-if [ -f "$ROOT_DIR/Sources/Clanker/Resources/AppIcon.icns" ]; then
+# Copy app icon.
+if [[ -f "$ROOT_DIR/Sources/Clanker/Resources/AppIcon.icns" ]]; then
   cp "$ROOT_DIR/Sources/Clanker/Resources/AppIcon.icns" "$APP_CONTENTS/Resources/AppIcon.icns"
 fi
 
@@ -207,7 +356,7 @@ if is_release_mode; then
 elif has_signing_identity; then
   sign_app "$APP_BUNDLE"
 else
-  echo "⚠️  Signing identity not found — skipping codesign (Accessibility prompts may recur)"
+  echo "warning: signing identity not found; skipping codesign"
 fi
 
 open_app() {
@@ -235,10 +384,11 @@ case "$MODE" in
     pgrep -x "$APP_NAME" >/dev/null
     ;;
   --install|install)
-    rm -rf "$INSTALL_BUNDLE"
-    cp -R "$APP_BUNDLE" "$INSTALL_BUNDLE"
-    # Re-sign at the installed path (codesign is path-sensitive)
+    install_bundle_preserving_container "$APP_BUNDLE" "$INSTALL_BUNDLE"
     sign_app "$INSTALL_BUNDLE"
+    if [[ "${NOTARIZE_INSTALL:-1}" == "1" ]]; then
+      notarize_app "$INSTALL_BUNDLE"
+    fi
     /usr/bin/open -n "$INSTALL_BUNDLE"
     sleep 1
     pgrep -x "$APP_NAME" >/dev/null
@@ -252,28 +402,10 @@ case "$MODE" in
     cp -R "$APP_BUNDLE" "$RELEASE_APP"
 
     sign_app "$RELEASE_APP"
+    notarize_app "$RELEASE_APP"
     zip_app "$RELEASE_APP" "$RELEASE_ZIP"
 
-    if [[ "$MODE" == "--notarize" || "$MODE" == "notarize" ]]; then
-      notary_keychain_args=()
-      if [[ -f "$NOTARY_KEYCHAIN" ]]; then
-        unlock_signing_keychain
-        notary_keychain_args=(--keychain "$NOTARY_KEYCHAIN")
-      fi
-
-      xcrun notarytool submit "$RELEASE_ZIP" \
-        --keychain-profile "$NOTARY_PROFILE" \
-        "${notary_keychain_args[@]}" \
-        --wait \
-        --timeout 30m
-
-      xcrun stapler staple "$RELEASE_APP"
-      xcrun stapler validate "$RELEASE_APP"
-      spctl --assess --type execute --verbose=4 "$RELEASE_APP"
-      zip_app "$RELEASE_APP" "$RELEASE_ZIP"
-    fi
-
-    echo "✅  Release built: $RELEASE_ZIP"
+    echo "Release built: $RELEASE_ZIP"
     ;;
   *)
     echo "usage: $0 [run|install|release|notarize|--debug|--logs|--telemetry|--verify]" >&2

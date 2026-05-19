@@ -6,25 +6,24 @@ import Foundation
 /// Routes a session back to the terminal/window that owns it.
 ///
 /// Strategy (matching spec §14):
-///   1. **Terminal.app / iTerm2** — drive AppleScript by tty so we focus the
-///      *exact* tab/session, not just the app.
-///   2. **Ghostty / Warp / WezTerm / Kitty / Alacritty** — use Accessibility
-///      window metadata (`AXTitle` / `AXDocument`) to raise the best matching
-///      window by cwd/project/harness, then fall back to app activation.
-///   3. **Unknown** — best-effort: activate by name if we can resolve a
+///   1. **tmux** — select the known session/window/pane before host focus.
+///   2. **Terminal.app / iTerm2 / Ghostty** — drive AppleScript by stable
+///      terminal ids or tty/cwd so we focus the exact tab/session when possible.
+///   3. **Warp / WezTerm / Kitty / Alacritty** — use Accessibility window
+///      metadata (`AXTitle` / `AXDocument`) to raise the best matching window
+///      by cwd/project/harness, then fall back to app activation.
+///   4. **Unknown** — best-effort: activate by name if we can resolve a
 ///      bundle, otherwise no-op.
 @MainActor
 enum TerminalFocusService {
-    private static var lastAccessibilityPromptAt: Date?
-
     @discardableResult
     static func focus(_ session: AgentSession) -> Bool {
-        let terminal = session.terminalName.flatMap(TerminalApp.match)
+        let terminal = terminalApp(for: session)
 
         // Terminal-backed rows may also carry deep links from transcript or
         // app-server metadata. Prefer returning to the host terminal/window;
         // deep links are a fallback only when no host can be focused.
-        if session.tty != nil || session.terminalName != nil {
+        if isTerminalBacked(session, terminal: terminal) {
             if focusHostApp(for: session, terminal: terminal) { return true }
             return openLaunchURL(session.launchURL)
         }
@@ -37,37 +36,79 @@ enum TerminalFocusService {
     }
 
     private static func focusHostApp(for session: AgentSession, terminal: TerminalApp?) -> Bool {
+        let tmuxSelected = selectTmuxPaneIfAvailable(session)
+        let hostTTY = session.tty ?? session.terminalContext.tty
+
         switch terminal {
         case .terminal:
-            if let tty = session.tty, let focusedWindow = focusTerminalApp(tty: tty) {
+            if let hostTTY, let focusedWindow = focusTerminalApp(tty: hostTTY) {
                 focusSelectedWindow(bundleID: TerminalApp.terminal.bundleID, focusedWindow: focusedWindow)
                 return true
             }
-            return activate(bundleID: TerminalApp.terminal.bundleID)
+            return activate(bundleID: TerminalApp.terminal.bundleID) || tmuxSelected
 
         case .iterm:
-            if let tty = session.tty, let focusedWindow = focusITerm(tty: tty) {
+            let sessionID = session.terminalContext.iTermSessionID ?? session.terminalContext.terminalSessionID
+            if let focusedWindow = focusITerm(sessionID: sessionID, tty: hostTTY) {
                 focusSelectedWindow(bundleID: TerminalApp.iterm.bundleID, focusedWindow: focusedWindow)
                 return true
             }
-            return activate(bundleID: TerminalApp.iterm.bundleID)
+            return activate(bundleID: TerminalApp.iterm.bundleID) || tmuxSelected
 
-        case .ghostty, .warp, .wezterm, .kitty, .alacritty:
+        case .ghostty:
+            if focusGhostty(session) { return true }
+            if focusAXWindow(for: .ghostty, session: session) { return true }
+            return activate(bundleID: TerminalApp.ghostty.bundleID) || tmuxSelected
+
+        case .warp, .wezterm, .kitty, .alacritty:
             guard let terminal else { return false }
             if focusAXWindow(for: terminal, session: session) { return true }
-            return activate(bundleID: terminal.bundleID)
+            return activate(bundleID: terminal.bundleID) || tmuxSelected
 
         case .none:
-            if let bundleID = session.appBundleID, activate(bundleID: bundleID) {
+            if let bundleID = session.terminalContext.terminalBundleID ?? session.appBundleID,
+               activate(bundleID: bundleID) {
                 return true
             }
 
             // Last resort: if we have a name, try to launch/activate by it.
-            if let name = session.terminalName {
+            if let name = session.terminalContext.terminalProgram ?? session.terminalName {
                 return activate(byName: name)
             }
-            return false
+            return tmuxSelected
         }
+    }
+
+    private static func terminalApp(for session: AgentSession) -> TerminalApp? {
+        if let bundleID = session.terminalContext.terminalBundleID,
+           let terminal = TerminalApp.app(withBundleID: bundleID) {
+            return terminal
+        }
+        if let terminalProgram = session.terminalContext.terminalProgram,
+           let terminal = TerminalApp.match(terminalProgram) {
+            return terminal
+        }
+        if let terminalName = session.terminalName,
+           let terminal = TerminalApp.match(terminalName) {
+            return terminal
+        }
+        if let appBundleID = session.appBundleID,
+           let terminal = TerminalApp.app(withBundleID: appBundleID) {
+            return terminal
+        }
+        return nil
+    }
+
+    private static func isTerminalBacked(_ session: AgentSession, terminal: TerminalApp?) -> Bool {
+        terminal != nil
+            || session.terminalContext.hasTerminalBacking
+            || session.tty != nil
+            || session.terminalName != nil
+    }
+
+    private static func selectTmuxPaneIfAvailable(_ session: AgentSession) -> Bool {
+        guard let target = session.terminalContext.tmuxTarget else { return false }
+        return TmuxSupport.select(target: target)
     }
 
     private static func openLaunchURL(_ launchURL: String?) -> Bool {
@@ -152,7 +193,7 @@ enum TerminalFocusService {
     }
 
     private static func focusAXWindow(for terminal: TerminalApp, session: AgentSession) -> Bool {
-        guard isAccessibilityTrusted(promptIfNeeded: true) else {
+        guard isAccessibilityTrusted() else {
             return false
         }
 
@@ -482,21 +523,8 @@ enum TerminalFocusService {
         return value as? String
     }
 
-    private static func isAccessibilityTrusted(promptIfNeeded: Bool) -> Bool {
-        if AXIsProcessTrusted() {
-            return true
-        }
-
-        guard promptIfNeeded else { return false }
-        let now = Date()
-        if let lastAccessibilityPromptAt,
-           now.timeIntervalSince(lastAccessibilityPromptAt) < 60 {
-            return false
-        }
-        lastAccessibilityPromptAt = now
-
-        let options = ["AXTrustedCheckOptionPrompt": true] as CFDictionary
-        return AXIsProcessTrustedWithOptions(options)
+    private static func isAccessibilityTrusted() -> Bool {
+        AXIsProcessTrusted()
     }
 
     private static func pathFromDocument(_ document: String) -> String? {
@@ -546,16 +574,30 @@ enum TerminalFocusService {
         return runFocusAppleScript(source)
     }
 
-    /// Focus the iTerm2 session whose `tty` matches.
-    private static func focusITerm(tty: String) -> FocusedWindow? {
-        let escaped = tty.replacingOccurrences(of: "\"", with: "\\\"")
+    /// Focus the iTerm2 session by stable session id first, then tty.
+    private static func focusITerm(sessionID: String?, tty: String?) -> FocusedWindow? {
+        let sessionIDs = uniqueAppleScriptValues([
+            sessionID,
+            normalizedITermSessionID(sessionID)
+        ])
+        let ttyValues = uniqueAppleScriptValues([
+            tty,
+            tty?.replacingOccurrences(of: "/dev/", with: ""),
+            tty.map { $0.hasPrefix("/dev/") ? $0 : "/dev/\($0)" }
+        ])
+        guard !sessionIDs.isEmpty || !ttyValues.isEmpty else { return nil }
+
         let source = """
-        tell application "iTerm"
+        tell application id "com.googlecode.iterm2"
+          set targetSessionIDs to \(appleScriptListLiteral(sessionIDs))
+          set targetTTYs to \(appleScriptListLiteral(ttyValues))
           repeat with w in windows
             repeat with t in tabs of w
               repeat with s in sessions of t
                 try
-                  if (tty of s as string) is equal to "\(escaped)" then
+                  set sessionID to (id of s as text)
+                  set sessionTTY to (tty of s as text)
+                  if targetSessionIDs contains sessionID or targetTTYs contains sessionTTY then
                     select s
                     tell t to select
                     tell w to select
@@ -573,6 +615,62 @@ enum TerminalFocusService {
         return "false"
         """
         return runFocusAppleScript(source)
+    }
+
+    /// Ghostty exposes terminals directly in AppleScript, including stable id,
+    /// working directory, and title. Use that before AX/window-title scoring.
+    private static func focusGhostty(_ session: AgentSession) -> Bool {
+        let terminalID = normalizedGhosttyTerminalID(session.terminalContext.terminalSessionID)
+        let cwd = session.terminalContext.cwd ?? expandingHomeIn(session.cwd)
+        let projectName = URL(fileURLWithPath: expandingHomeIn(session.cwd)).lastPathComponent
+        let titleHints = uniqueAppleScriptValues([session.title, session.projectName, projectName])
+        var lines = [
+            "tell application id \"com.mitchellh.ghostty\""
+        ]
+
+        if let terminalID {
+            lines.append(contentsOf: [
+                "set targetTerminalID to \(appleScriptStringLiteral(terminalID))",
+                "try",
+                "set targetTerminal to first terminal whose id is targetTerminalID",
+                "focus targetTerminal",
+                "return \"true\"",
+                "end try"
+            ])
+        }
+
+        if let normalizedCWD = sanitizedNonEmpty(cwd) {
+            lines.append(contentsOf: [
+                "set targetPath to \(appleScriptStringLiteral(normalizedCWD))",
+                "set exactPathMatches to every terminal whose working directory is targetPath",
+                "if (count of exactPathMatches) is 1 then",
+                "focus (item 1 of exactPathMatches)",
+                "return \"true\"",
+                "end if",
+                "set nestedPathMatches to every terminal whose working directory contains targetPath",
+                "if (count of nestedPathMatches) is 1 then",
+                "focus (item 1 of nestedPathMatches)",
+                "return \"true\"",
+                "end if"
+            ])
+        }
+
+        for (index, titleHint) in titleHints.enumerated() {
+            lines.append(contentsOf: [
+                "set targetTitle\(index) to \(appleScriptStringLiteral(titleHint))",
+                "set titleMatches\(index) to every terminal whose name contains targetTitle\(index)",
+                "if (count of titleMatches\(index)) is 1 then",
+                "focus (item 1 of titleMatches\(index))",
+                "return \"true\"",
+                "end if"
+            ])
+        }
+
+        lines.append(contentsOf: [
+            "return \"false\"",
+            "end tell"
+        ])
+        return runBooleanAppleScript(lines.joined(separator: "\n"))
     }
 
     @discardableResult
@@ -595,6 +693,67 @@ enum TerminalFocusService {
             return UInt32(rawID).map { FocusedWindow(windowID: CGWindowID($0)) }
         }
         return FocusedWindow(windowID: nil)
+    }
+
+    @discardableResult
+    private static func runBooleanAppleScript(_ source: String) -> Bool {
+        guard let script = NSAppleScript(source: source) else { return false }
+        var error: NSDictionary?
+        let result = script.executeAndReturnError(&error)
+        if let error {
+            #if DEBUG
+            NSLog("[Clanker] AppleScript focus error: %@", error)
+            #endif
+            return false
+        }
+        return result.stringValue == "true" || result.stringValue == "ok"
+    }
+
+    private static func normalizedITermSessionID(_ value: String?) -> String? {
+        guard let trimmed = sanitizedNonEmpty(value) else { return nil }
+        if let suffix = trimmed.split(separator: ":", omittingEmptySubsequences: false).last,
+           !suffix.isEmpty {
+            return String(suffix)
+        }
+        return trimmed
+    }
+
+    private static func normalizedGhosttyTerminalID(_ value: String?) -> String? {
+        guard let trimmed = sanitizedNonEmpty(value),
+              UUID(uuidString: trimmed.uppercased()) != nil else {
+            return nil
+        }
+        return trimmed.uppercased()
+    }
+
+    private static func uniqueAppleScriptValues(_ values: [String?]) -> [String] {
+        var seen = Set<String>()
+        var result: [String] = []
+        for value in values {
+            guard let value = sanitizedNonEmpty(value), !seen.contains(value) else { continue }
+            seen.insert(value)
+            result.append(value)
+        }
+        return result
+    }
+
+    private static func appleScriptListLiteral(_ values: [String]) -> String {
+        "{\(values.map(appleScriptStringLiteral).joined(separator: ", "))}"
+    }
+
+    private static func appleScriptStringLiteral(_ value: String) -> String {
+        let escaped = value
+            .replacingOccurrences(of: "\\", with: "\\\\")
+            .replacingOccurrences(of: "\"", with: "\\\"")
+        return "\"\(escaped)\""
+    }
+
+    private static func sanitizedNonEmpty(_ value: String?) -> String? {
+        guard let trimmed = value?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !trimmed.isEmpty else {
+            return nil
+        }
+        return trimmed
     }
 }
 

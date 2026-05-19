@@ -1,5 +1,4 @@
 import AppKit
-import ApplicationServices
 import Combine
 import SwiftUI
 
@@ -39,7 +38,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         usageStore.start()
         recentsStore.start()
         updateManager.start()
-        requestAccessibilityIfNeeded()
 
         if RecentsSettings.shared.hasCompletedSetup {
             showNotch()
@@ -165,15 +163,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
               let screen = displaySettings.preferredScreen(active: NSScreen.main) else { return }
         controller.moveToScreen(screen)
         displaySettings.noteCurrentScreen(screen)
-    }
-
-    /// Ask for Accessibility permission at launch so the first precise focus
-    /// attempt is usually ready. The focus service also re-prompts if trust is
-    /// later reset or the user switches to a newly signed build.
-    private func requestAccessibilityIfNeeded() {
-        guard !AXIsProcessTrusted() else { return }
-        let options = ["AXTrustedCheckOptionPrompt": true] as CFDictionary
-        AXIsProcessTrustedWithOptions(options)
     }
 
     private func printSessionsAndTerminate() {

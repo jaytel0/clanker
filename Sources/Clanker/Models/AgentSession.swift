@@ -83,6 +83,106 @@ enum SessionCloseCapability: String, Sendable {
     }
 }
 
+enum TerminalContextSource: String, Sendable {
+    case unknown
+    case process
+    case transcript
+    case appServer
+    case terminalNative
+    case tmux
+    case app
+}
+
+enum TerminalContextConfidence: Int, Sendable {
+    case unknown = 0
+    case low = 20
+    case medium = 50
+    case high = 80
+    case exact = 100
+}
+
+struct TerminalContext: Equatable, Sendable {
+    var terminalBundleID: String?
+    var terminalProgram: String?
+    var terminalSessionID: String?
+    var iTermSessionID: String?
+    var tty: String?
+    var tmuxSession: String?
+    var tmuxPane: String?
+    var cwd: String?
+    var source: TerminalContextSource
+    var confidence: TerminalContextConfidence
+
+    static let empty = TerminalContext(
+        terminalBundleID: nil,
+        terminalProgram: nil,
+        terminalSessionID: nil,
+        iTermSessionID: nil,
+        tty: nil,
+        tmuxSession: nil,
+        tmuxPane: nil,
+        cwd: nil,
+        source: .unknown,
+        confidence: .unknown
+    )
+
+    var isEmpty: Bool {
+        terminalBundleID == nil
+            && terminalProgram == nil
+            && terminalSessionID == nil
+            && iTermSessionID == nil
+            && tty == nil
+            && tmuxSession == nil
+            && tmuxPane == nil
+            && cwd == nil
+    }
+
+    var hasTerminalBacking: Bool {
+        terminalBundleID != nil
+            || terminalProgram != nil
+            || terminalSessionID != nil
+            || iTermSessionID != nil
+            || tty != nil
+            || tmuxTarget != nil
+    }
+
+    var stableIdentityKey: String? {
+        if let terminalSessionID {
+            return "terminalSession:\(terminalSessionID)"
+        }
+        if let iTermSessionID {
+            return "iTermSession:\(iTermSessionID)"
+        }
+        if let tmuxTarget {
+            return "tmux:\(tmuxTarget)"
+        }
+        return nil
+    }
+
+    var tmuxTarget: String? {
+        guard let tmuxSession, let tmuxPane else { return nil }
+        return "\(tmuxSession):\(tmuxPane)"
+    }
+
+    func merged(with newer: TerminalContext) -> TerminalContext {
+        let preferred = newer.confidence.rawValue >= confidence.rawValue ? newer : self
+        let fallback = newer.confidence.rawValue >= confidence.rawValue ? self : newer
+
+        return TerminalContext(
+            terminalBundleID: preferred.terminalBundleID ?? fallback.terminalBundleID,
+            terminalProgram: preferred.terminalProgram ?? fallback.terminalProgram,
+            terminalSessionID: preferred.terminalSessionID ?? fallback.terminalSessionID,
+            iTermSessionID: preferred.iTermSessionID ?? fallback.iTermSessionID,
+            tty: preferred.tty ?? fallback.tty,
+            tmuxSession: preferred.tmuxSession ?? fallback.tmuxSession,
+            tmuxPane: preferred.tmuxPane ?? fallback.tmuxPane,
+            cwd: preferred.cwd ?? fallback.cwd,
+            source: preferred.source,
+            confidence: preferred.confidence
+        )
+    }
+}
+
 struct AgentSession: Identifiable, Equatable, Sendable {
     let id: String
     var title: String
@@ -106,6 +206,10 @@ struct AgentSession: Identifiable, Equatable, Sendable {
     var appBundleID: String?
     /// Deep link to the owning app/session when the provider exposes one.
     var launchURL: String?
+    /// Rich terminal provenance used for exact focus, tmux routing, and safer
+    /// discovery merges. The legacy terminal fields above remain for UI and
+    /// close-logic compatibility.
+    var terminalContext: TerminalContext = .empty
     /// Whether Clanker can safely offer a close control for this row.
     var closeCapability: SessionCloseCapability = .none
 

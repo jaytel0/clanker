@@ -118,7 +118,7 @@ private struct ClosedContent: View {
 
             ClosedStatusBadge(
                 attentionCount: viewModel.attentionCount,
-                activeCount: viewModel.activeCount
+                workingCount: viewModel.workingCount
             )
         }
         .frame(maxHeight: .infinity)
@@ -127,7 +127,7 @@ private struct ClosedContent: View {
 
 private struct ClosedStatusBadge: View {
     let attentionCount: Int
-    let activeCount: Int
+    let workingCount: Int
 
     var body: some View {
         Group {
@@ -140,10 +140,10 @@ private struct ClosedStatusBadge: View {
                         .foregroundStyle(NotchPalette.attention)
                 }
                 .transition(.scale.combined(with: .opacity))
-            } else if activeCount > 0 {
+            } else if workingCount > 0 {
                 HStack(spacing: 4) {
                     PulsingDot(color: NotchPalette.active)
-                    Text("\(activeCount)")
+                    Text("\(workingCount)")
                         .font(.system(size: 11, weight: .semibold, design: .rounded))
                         .monospacedDigit()
                         .foregroundStyle(.white.opacity(0.86))
@@ -158,7 +158,7 @@ private struct ClosedStatusBadge: View {
             }
         }
         .animation(NotchMotion.content, value: attentionCount)
-        .animation(NotchMotion.content, value: activeCount)
+        .animation(NotchMotion.content, value: workingCount)
     }
 }
 
@@ -211,7 +211,7 @@ private struct ExpandedContent: View {
     private var sessionsPane: some View {
         ScrollView(.vertical, showsIndicators: false) {
             VStack(alignment: .leading, spacing: 12) {
-                if viewModel.sessions.isEmpty {
+                if viewModel.visibleSessions.isEmpty {
                     EmptyState(
                         icon: "moon.zzz.fill",
                         title: "All quiet",
@@ -231,7 +231,7 @@ private struct ExpandedContent: View {
                 }
             }
             .padding(.bottom, 18)
-            .animation(NotchMotion.row, value: viewModel.sessions.map(\.id))
+            .animation(NotchMotion.row, value: viewModel.visibleSessions.map(\.id))
         }
         .scrollContentBackground(.hidden)
         .frame(maxHeight: .infinity)
@@ -240,7 +240,7 @@ private struct ExpandedContent: View {
     private var recentsPane: some View {
         ScrollView(.vertical, showsIndicators: false) {
             VStack(alignment: .leading, spacing: 4) {
-                if viewModel.recents.isEmpty {
+                if viewModel.visibleRecents.isEmpty {
                     EmptyState(
                         icon: "folder.badge.questionmark",
                         title: "No recent projects",
@@ -261,7 +261,7 @@ private struct ExpandedContent: View {
                 }
             }
             .padding(.bottom, 18)
-            .animation(NotchMotion.row, value: viewModel.recents.map(\.id))
+            .animation(NotchMotion.row, value: viewModel.visibleRecents.map(\.id))
         }
         .scrollContentBackground(.hidden)
         .frame(maxHeight: .infinity)
@@ -303,7 +303,7 @@ private struct ExpandedContent: View {
                 }
             }
             .padding(.bottom, 18)
-            .animation(NotchMotion.row, value: viewModel.usageSnapshots.map(\.id))
+            .animation(NotchMotion.row, value: viewModel.spendSummary.snapshots.map(\.id))
             .animation(NotchMotion.tab, value: viewModel.selectedSpendTimeframe)
         }
         .scrollContentBackground(.hidden)
@@ -421,8 +421,8 @@ private struct ExpandedHeader: View {
         HStack(spacing: 6) {
             PaneTabBar(
                 selected: viewModel.selectedPane,
-                sessionsCount: viewModel.sessions.count,
-                recentsCount: viewModel.recents.count,
+                sessionsCount: viewModel.openCount,
+                recentsCount: viewModel.visibleRecents.count,
                 spendCount: viewModel.spendSummary.snapshots.count,
                 attentionCount: viewModel.attentionCount,
                 onSelect: { viewModel.selectPane($0) }
@@ -443,6 +443,8 @@ private struct ExpandedHeader: View {
             DisplayLockButton()
             SettingsCogButton(
                 updateManager: viewModel.updateManager,
+                isDemoMode: viewModel.isDemoMode,
+                onSetDemoMode: { viewModel.setDemoMode($0) },
                 onShowOnboarding: viewModel.onShowOnboarding ?? {}
             )
         }
@@ -649,6 +651,8 @@ private struct DisplayLockPopover: View {
 
 private struct SettingsCogButton: View {
     @ObservedObject var updateManager: GitHubUpdateManager
+    let isDemoMode: Bool
+    let onSetDemoMode: (Bool) -> Void
     let onShowOnboarding: () -> Void
     @State private var hovering = false
 
@@ -657,6 +661,10 @@ private struct SettingsCogButton: View {
             updateMenuItems
 
             Divider()
+
+            Toggle(isOn: demoModeBinding) {
+                Label("Demo Mode", systemImage: "sparkles")
+            }
 
             Button {
                 onShowOnboarding()
@@ -704,6 +712,13 @@ private struct SettingsCogButton: View {
         .fixedSize()
         .onHover { hovering = $0 }
         .animation(NotchMotion.hover, value: hovering)
+    }
+
+    private var demoModeBinding: Binding<Bool> {
+        Binding(
+            get: { isDemoMode },
+            set: { onSetDemoMode($0) }
+        )
     }
 
     @ViewBuilder

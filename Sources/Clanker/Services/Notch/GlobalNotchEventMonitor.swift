@@ -116,26 +116,22 @@ final class GlobalNotchEventMonitor {
 
     @discardableResult
     private func handleKeyDown(_ event: NSEvent) -> Bool {
+        let modifierFlags = event.modifierFlags
+            .intersection(.deviceIndependentFlagsMask)
+            .subtracting([.capsLock, .numericPad, .function])
         guard let viewModel,
               let window,
               viewModel.isExpanded,
               window.isKeyWindow,
-              event.modifierFlags.intersection(.deviceIndependentFlagsMask) == [] else {
+              modifierFlags.isEmpty else {
             return false
         }
-        switch event.charactersIgnoringModifiers {
-        case "1":
-            viewModel.selectPane(.sessions)
+
+        if let pane = NotchPane(shortcutKey: event.charactersIgnoringModifiers) {
+            viewModel.selectPane(pane)
             return true
-        case "2":
-            viewModel.selectPane(.recents)
-            return true
-        case "3":
-            viewModel.selectPane(.spend)
-            return true
-        default:
-            return false
         }
+        return false
     }
 
     private func currentScreen() -> NSScreen? {

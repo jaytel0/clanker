@@ -63,15 +63,69 @@ private struct DiscoveredSession: Sendable {
     var pid: Int?
     var terminalName: String?
     var tty: String?
+    var terminalContext: TerminalContext
     var appBundleID: String?
     var launchURL: String?
+
+    init(
+        sessionKey: String?,
+        sourceKind: DiscoverySourceKind,
+        id: String,
+        title: String,
+        cwd: String,
+        harness: HarnessID,
+        status: SessionStatusKind,
+        preview: String,
+        lastActivity: Date,
+        pid: Int?,
+        terminalName: String?,
+        tty: String?,
+        terminalContext: TerminalContext = .empty,
+        appBundleID: String?,
+        launchURL: String?
+    ) {
+        self.sessionKey = sessionKey
+        self.sourceKind = sourceKind
+        self.id = id
+        self.title = title
+        self.cwd = cwd
+        self.harness = harness
+        self.status = status
+        self.preview = preview
+        self.lastActivity = lastActivity
+        self.pid = pid
+        self.terminalName = terminalName
+        self.tty = tty
+        self.appBundleID = appBundleID
+        self.launchURL = launchURL
+
+        let legacyContext = TerminalContext(
+            terminalBundleID: Self.legacyTerminalBundleID(
+                appBundleID: appBundleID,
+                terminalName: terminalName,
+                tty: tty
+            ),
+            terminalProgram: terminalName,
+            terminalSessionID: nil,
+            iTermSessionID: nil,
+            tty: tty,
+            tmuxSession: nil,
+            tmuxPane: nil,
+            cwd: cwd,
+            source: Self.terminalContextSource(for: sourceKind),
+            confidence: Self.terminalContextConfidence(for: sourceKind, tty: tty, terminalName: terminalName)
+        )
+        self.terminalContext = terminalContext.isEmpty
+            ? legacyContext
+            : legacyContext.merged(with: terminalContext)
+    }
 
     var normalizedCWD: String {
         DiscoveryHelpers.normalizedPath(cwd)
     }
 
     var isTerminalBacked: Bool {
-        terminalName?.isEmpty == false || tty?.isEmpty == false
+        terminalName?.isEmpty == false || tty?.isEmpty == false || terminalContext.hasTerminalBacking
     }
 
     var isLive: Bool {
@@ -109,8 +163,44 @@ private struct DiscoveredSession: Sendable {
             isLive: isLive,
             appBundleID: appBundleID,
             launchURL: launchURL,
+            terminalContext: terminalContext,
             closeCapability: closeCapability
         )
+    }
+
+    private static func terminalContextSource(for sourceKind: DiscoverySourceKind) -> TerminalContextSource {
+        switch sourceKind {
+        case .appServer: return .appServer
+        case .transcript: return .transcript
+        case .process: return .process
+        case .app: return .app
+        }
+    }
+
+    private static func terminalContextConfidence(
+        for sourceKind: DiscoverySourceKind,
+        tty: String?,
+        terminalName: String?
+    ) -> TerminalContextConfidence {
+        if tty?.isEmpty == false {
+            return sourceKind == .process ? .medium : .high
+        }
+        if terminalName?.isEmpty == false {
+            return .low
+        }
+        return .unknown
+    }
+
+    private static func legacyTerminalBundleID(
+        appBundleID: String?,
+        terminalName: String?,
+        tty: String?
+    ) -> String? {
+        guard let appBundleID else { return nil }
+        if terminalName?.isEmpty == false || tty?.isEmpty == false {
+            return appBundleID
+        }
+        return TerminalApp.app(withBundleID: appBundleID) == nil ? nil : appBundleID
     }
 }
 
@@ -151,6 +241,15 @@ private enum SessionMerger {
             }
         }
 
+        if let identityKey = candidate.terminalContext.stableIdentityKey {
+            if let index = sessions.firstIndex(where: {
+                $0.harness == candidate.harness
+                    && $0.terminalContext.stableIdentityKey == identityKey
+            }) {
+                return index
+            }
+        }
+
         if let tty = candidate.tty {
             if let index = sessions.firstIndex(where: {
                 $0.harness == candidate.harness && $0.tty == tty
@@ -176,21 +275,32 @@ private enum SessionMerger {
             guard existing.harness == candidate.harness else { return false }
             guard existing.normalizedCWD == candidate.normalizedCWD else { return false }
             guard existing.isTerminalBacked != candidate.isTerminalBacked else { return false }
-            return abs(existing.lastActivity.timeIntervalSince(candidate.lastActivity)) < 12 * 60 * 60
+            guard isContextualMergeFresh(existing, candidate) else { return false }
+            return true
         }
 
-        // When multiple candidates overlap on (harness, cwd) — e.g. several
-        // transcripts in the same Pi project dir from prior sessions — the
-        // old behaviour bailed entirely, leaving the live terminal session
-        // with its stale process-start `lastActivity`. That broke the
-        // "Working\u{2026}" pill, which keys off transcript-mtime freshness.
-        //
-        // Pick the match with the most recent activity instead. For a live
-        // process row that means absorbing the freshest transcript — which
-        // is the one the user is currently writing into. Stale transcripts
-        // remain in the merged set but are filtered out at the ViewModel
-        // (transcript-only rows fail `isLive`), so no UI duplication.
-        return matches.max { sessions[$0].lastActivity < sessions[$1].lastActivity }
+        // CWD-only correlation is a last resort. If there are multiple same
+        // project candidates, keeping separate rows is better than attaching a
+        // fresh transcript to the wrong terminal.
+        guard matches.count == 1 else { return nil }
+        return matches.first
+    }
+
+    private static func isContextualMergeFresh(_ lhs: DiscoveredSession, _ rhs: DiscoveredSession) -> Bool {
+        guard lhs.sourceKind == .transcript || rhs.sourceKind == .transcript else {
+            return false
+        }
+
+        let transcript = lhs.sourceKind == .transcript ? lhs : rhs
+        let age = Date().timeIntervalSince(transcript.lastActivity)
+        switch transcript.status {
+        case .waitingForApproval, .waitingForInput, .error:
+            return age < 2 * 60 * 60
+        case .working, .runningTool, .thinking, .active:
+            return age < 15 * 60
+        case .idle, .completed:
+            return false
+        }
     }
 
     private static func combine(_ lhs: DiscoveredSession, _ rhs: DiscoveredSession) -> DiscoveredSession {
@@ -212,6 +322,7 @@ private enum SessionMerger {
             pid: preferred.pid ?? other.pid,
             terminalName: preferred.terminalName ?? other.terminalName,
             tty: preferred.tty ?? other.tty,
+            terminalContext: preferred.terminalContext.merged(with: other.terminalContext),
             appBundleID: hostAppBundleID(preferred, other),
             launchURL: preferred.launchURL ?? other.launchURL
         )
@@ -375,6 +486,12 @@ private struct ProcessSnapshot: Sendable {
 
 private struct TerminalProcessSource {
     let snapshot: ProcessSnapshot
+    let tmuxPanes: [TmuxPane]
+
+    init(snapshot: ProcessSnapshot, tmuxPanes: [TmuxPane] = TmuxSupport.listPanes()) {
+        self.snapshot = snapshot
+        self.tmuxPanes = tmuxPanes
+    }
 
     /// Pick the harness rooted closest to the user's prompt for this tty.
     ///
@@ -457,6 +574,7 @@ private struct TerminalProcessSource {
             ?? ProcessRunner.cwd(for: harnessRow?.pid ?? owner.pid)
             ?? ProcessRunner.cwd(for: owner.pid)
             ?? NSHomeDirectory()
+        let tmuxPane = tmuxPane(containing: harnessRow?.pid ?? foregroundPid ?? owner.pid)
         let title: String
         let preview: String
         let status: SessionStatusKind
@@ -480,12 +598,28 @@ private struct TerminalProcessSource {
             status = .idle
         }
 
+        let sessionKey = tmuxPane
+            .map { "\(harness.rawValue):tmux:\($0.target)" }
+            ?? "\(harness.rawValue):tty:\(tty)"
+        let terminalContext = TerminalContext(
+            terminalBundleID: terminal?.bundleID,
+            terminalProgram: terminal?.name,
+            terminalSessionID: nil,
+            iTermSessionID: nil,
+            tty: tty,
+            tmuxSession: tmuxPane?.session,
+            tmuxPane: tmuxPane?.paneAddress,
+            cwd: tmuxPane?.cwd ?? cwd,
+            source: tmuxPane == nil ? .process : .tmux,
+            confidence: tmuxPane == nil ? .medium : .high
+        )
+
         return DiscoveredSession(
-            sessionKey: "\(harness.rawValue):tty:\(tty)",
+            sessionKey: sessionKey,
             sourceKind: .process,
-            id: "\(harness.rawValue)-tty-\(DiscoveryHelpers.identifierSafe(tty))",
+            id: "\(harness.rawValue)-\(DiscoveryHelpers.identifierSafe(sessionKey))",
             title: title,
-            cwd: cwd,
+            cwd: tmuxPane?.cwd ?? cwd,
             harness: harness,
             status: status,
             preview: preview,
@@ -493,6 +627,7 @@ private struct TerminalProcessSource {
             pid: harnessRow?.pid ?? owner.pid,
             terminalName: terminal?.name,
             tty: tty,
+            terminalContext: terminalContext,
             appBundleID: terminal?.bundleID,
             launchURL: nil
         )
@@ -531,12 +666,29 @@ private struct TerminalProcessSource {
                 codexMacAppInfo = (nil, nil)
             }
 
+            let tmuxPane = tmuxPane(containing: row.pid)
+            let sessionKey = tmuxPane
+                .map { "\(harness.rawValue):tmux:\($0.target)" }
+                ?? "\(harness.rawValue):pid:\(row.pid)"
+            let terminalContext = TerminalContext(
+                terminalBundleID: nil,
+                terminalProgram: nil,
+                terminalSessionID: nil,
+                iTermSessionID: nil,
+                tty: tmuxPane?.tty,
+                tmuxSession: tmuxPane?.session,
+                tmuxPane: tmuxPane?.paneAddress,
+                cwd: tmuxPane?.cwd ?? cwd,
+                source: tmuxPane == nil ? .process : .tmux,
+                confidence: tmuxPane == nil ? .low : .high
+            )
+
             return DiscoveredSession(
-                sessionKey: "\(harness.rawValue):pid:\(row.pid)",
+                sessionKey: sessionKey,
                 sourceKind: .process,
-                id: "\(harness.rawValue)-pid-\(row.pid)",
+                id: "\(harness.rawValue)-\(DiscoveryHelpers.identifierSafe(sessionKey))",
                 title: title,
-                cwd: cwd,
+                cwd: tmuxPane?.cwd ?? cwd,
                 harness: harness,
                 status: .active,
                 preview: "PID \(row.pid)",
@@ -544,9 +696,17 @@ private struct TerminalProcessSource {
                 pid: row.pid,
                 terminalName: nil,
                 tty: nil,
+                terminalContext: terminalContext,
                 appBundleID: codexMacAppInfo.bundleID,
                 launchURL: codexMacAppInfo.launchURL
             )
+        }
+    }
+
+    private func tmuxPane(containing pid: Int?) -> TmuxPane? {
+        guard let pid else { return nil }
+        return tmuxPanes.first {
+            $0.pid == pid || snapshot.isDescendant(pid, of: $0.pid)
         }
     }
 

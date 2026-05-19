@@ -14,6 +14,15 @@ enum NotchPane: String, CaseIterable, Identifiable, Sendable {
 
     var id: String { rawValue }
 
+    init?(shortcutKey: String?) {
+        switch shortcutKey {
+        case "1": self = .sessions
+        case "2": self = .recents
+        case "3": self = .spend
+        default: return nil
+        }
+    }
+
     var title: String {
         switch self {
         case .sessions: "Clankers"
@@ -23,7 +32,7 @@ enum NotchPane: String, CaseIterable, Identifiable, Sendable {
     }
 }
 
-enum TabDirection {
+enum TabDirection: Equatable {
     case forward  // moving right (higher index)
     case backward // moving left (lower index)
 }
@@ -37,7 +46,8 @@ final class NotchViewModel: ObservableObject {
     @Published private(set) var sessions: [AgentSession] = []
     @Published private(set) var recents: [RecentProject] = []
     @Published private(set) var usageSnapshots: [HarnessUsageSnapshot] = []
-    @Published var selectedSpendTimeframe: SpendTimeframe = .last30Days
+    @Published var selectedSpendTimeframe: SpendTimeframe = .today
+    @Published private(set) var isDemoMode = UserDefaults.standard.bool(forKey: NotchDemoMode.defaultsKey)
 
     /// Set by the controller so the view knows which display type is active.
     @Published var screenHasNotch = false
@@ -104,27 +114,30 @@ final class NotchViewModel: ObservableObject {
 
     // MARK: - Derived
 
-    /// `sessions` is already pre-filtered to `isLive` rows in the sink, so
-    /// every session in scope is a real running thing.
-    /// "Active" in the closed-bar badge means "actually doing work right
-    /// now", not "exists". `.active` and `.idle` are ambient "session is
-    /// open" states and shouldn't inflate this count.
-    var activeCount: Int {
-        sessions.filter { $0.status != .idle && $0.status != .active && $0.status != .completed }.count
+    /// Open/live rows shown in the Clankers tab.
+    var openCount: Int {
+        visibleSessions.count
+    }
+
+    /// Rows that are currently doing work. `.active` and `.idle` mean the
+    /// session exists, not that output is flowing; attention states are counted
+    /// separately so the closed badge has one unambiguous number.
+    var workingCount: Int {
+        visibleSessions.filter { $0.countsAsLiveActive && !$0.needsAttention }.count
     }
 
     var attentionCount: Int {
-        sessions.filter(\.needsAttention).count
+        visibleSessions.filter(\.needsAttention).count
     }
 
     var representativeSession: AgentSession? {
-        sessions.first(where: \.needsAttention) ?? sessions.first
+        visibleSessions.first(where: \.needsAttention) ?? visibleSessions.first
     }
 
     /// Up to three harness icons to fan out in the closed bar.
     var representativeHarnesses: [HarnessID] {
         var seen: [HarnessID] = []
-        for session in sessions {
+        for session in visibleSessions {
             if !seen.contains(session.harness) {
                 seen.append(session.harness)
             }
@@ -134,7 +147,7 @@ final class NotchViewModel: ObservableObject {
     }
 
     var groupedSessions: [SessionGroup] {
-        Dictionary(grouping: sessions, by: \.projectName)
+        Dictionary(grouping: visibleSessions, by: \.projectName)
             .map { SessionGroup(title: $0.key, sessions: $0.value.sortedForNotch()) }
             .sorted { lhs, rhs in
                 let lhsAttention = lhs.sessions.contains(where: \.needsAttention)
@@ -147,11 +160,26 @@ final class NotchViewModel: ObservableObject {
     }
 
     var groupedRecents: [RecentProjectGroup] {
-        RecentProjectGroup.group(recents)
+        RecentProjectGroup.group(visibleRecents)
     }
 
     var spendSummary: SpendSummary {
-        SpendSummary(snapshots: usageSnapshots, timeframe: selectedSpendTimeframe)
+        SpendSummary(snapshots: visibleUsageSnapshots, timeframe: selectedSpendTimeframe)
+    }
+
+    var visibleSessions: [AgentSession] {
+        guard isDemoMode else { return sessions }
+        return sessions.filter(NotchDemoMode.isPersonalSession)
+    }
+
+    var visibleRecents: [RecentProject] {
+        guard isDemoMode else { return recents }
+        return recents.filter(NotchDemoMode.isPersonalProject)
+    }
+
+    var visibleUsageSnapshots: [HarnessUsageSnapshot] {
+        guard isDemoMode else { return usageSnapshots }
+        return NotchDemoMode.demoUsageSnapshots()
     }
 
     // MARK: - Intent
@@ -176,8 +204,11 @@ final class NotchViewModel: ObservableObject {
     /// minimal overshoot, no perceptible settle.
     func selectPane(_ pane: NotchPane) {
         guard pane != selectedPane else { return }
-        let oldIndex = NotchPane.allCases.firstIndex(of: selectedPane)!
-        let newIndex = NotchPane.allCases.firstIndex(of: pane)!
+        guard let oldIndex = NotchPane.allCases.firstIndex(of: selectedPane),
+              let newIndex = NotchPane.allCases.firstIndex(of: pane) else {
+            selectedPane = pane
+            return
+        }
         tabDirection = newIndex > oldIndex ? .forward : .backward
         if pane == .spend {
             usageStore?.refreshNow()
@@ -191,6 +222,18 @@ final class NotchViewModel: ObservableObject {
         guard timeframe != selectedSpendTimeframe else { return }
         withAnimation(NotchMotion.tab) {
             selectedSpendTimeframe = timeframe
+        }
+    }
+
+    func setDemoMode(_ enabled: Bool) {
+        guard enabled != isDemoMode else { return }
+        isDemoMode = enabled
+        UserDefaults.standard.set(enabled, forKey: NotchDemoMode.defaultsKey)
+
+        if enabled, selectedSpendTimeframe != .today {
+            withAnimation(NotchMotion.tab) {
+                selectedSpendTimeframe = .today
+            }
         }
     }
 
@@ -268,6 +311,119 @@ final class NotchViewModel: ObservableObject {
         hoverCloseTask?.cancel()
         hoverOpenTask = nil
         hoverCloseTask = nil
+    }
+}
+
+enum NotchDemoMode {
+    static let defaultsKey = "notchDemoModeEnabled"
+
+    static func isPersonalProject(_ project: RecentProject) -> Bool {
+        !containsShopify(project.path)
+            && (project.category.localizedCaseInsensitiveCompare("personal") == .orderedSame
+                || isPersonalPath(project.path))
+    }
+
+    static func isPersonalSession(_ session: AgentSession) -> Bool {
+        isPersonalPath(session.cwd)
+    }
+
+    static func demoUsageSnapshots(now: Date = Date(), calendar: Calendar = .current) -> [HarnessUsageSnapshot] {
+        let startOfDay = calendar.startOfDay(for: now)
+        let elapsedToday = max(now.timeIntervalSince(startOfDay), 60)
+        let entries: [DemoSpendEntry] = [
+            DemoSpendEntry(
+                harness: .codex,
+                sessionID: "demo-codex-clanker-1",
+                projectName: "clanker",
+                cwd: "~/Developer/personal/clanker",
+                model: "gpt-5.2-codex",
+                tokens: UsageTokenBreakdown(input: 1_940_000, output: 388_000, cacheWrite: 116_000, cacheRead: 2_240_000, reasoningOutput: 142_000, total: 4_826_000),
+                costUSD: decimal("286.41")
+            ),
+            DemoSpendEntry(
+                harness: .claude,
+                sessionID: "demo-claude-raycast-lab",
+                projectName: "raycast-lab",
+                cwd: "~/Developer/personal/raycast-lab",
+                model: "claude-opus-4.5",
+                tokens: UsageTokenBreakdown(input: 1_520_000, output: 276_000, cacheWrite: 84_000, cacheRead: 1_180_000, reasoningOutput: nil, total: 3_060_000),
+                costUSD: decimal("214.76")
+            ),
+            DemoSpendEntry(
+                harness: .pi,
+                sessionID: "demo-pi-home-dashboard",
+                projectName: "home-dashboard",
+                cwd: "~/Developer/personal/home-dashboard",
+                model: "pi-agent",
+                tokens: UsageTokenBreakdown(input: 1_320_000, output: 244_000, cacheWrite: 72_000, cacheRead: 940_000, reasoningOutput: 58_000, total: 2_634_000),
+                costUSD: decimal("168.92")
+            ),
+            DemoSpendEntry(
+                harness: .codex,
+                sessionID: "demo-codex-clanker-2",
+                projectName: "clanker",
+                cwd: "~/Developer/personal/clanker",
+                model: "gpt-5.2-codex",
+                tokens: UsageTokenBreakdown(input: 940_000, output: 166_000, cacheWrite: 44_000, cacheRead: 820_000, reasoningOutput: 64_000, total: 2_034_000),
+                costUSD: decimal("136.58")
+            ),
+            DemoSpendEntry(
+                harness: .claude,
+                sessionID: "demo-claude-dotfiles",
+                projectName: "dotfiles",
+                cwd: "~/Developer/personal/dotfiles",
+                model: "claude-sonnet-4.5",
+                tokens: UsageTokenBreakdown(input: 780_000, output: 128_000, cacheWrite: 36_000, cacheRead: 710_000, reasoningOutput: nil, total: 1_654_000),
+                costUSD: decimal("107.29")
+            )
+        ]
+
+        return entries.enumerated().map { index, entry in
+            let position = Double(index + 1) / Double(entries.count + 1)
+            let observedAt = startOfDay.addingTimeInterval(elapsedToday * position)
+            return HarnessUsageSnapshot(
+                id: "demo-\(entry.sessionID)",
+                harness: entry.harness,
+                sessionID: entry.sessionID,
+                projectName: entry.projectName,
+                cwd: entry.cwd,
+                model: entry.model,
+                tokens: entry.tokens,
+                costUSD: entry.costUSD,
+                costSource: .estimated,
+                pricingSource: "Demo Mode",
+                observedAt: observedAt,
+                sourcePath: nil
+            )
+        }
+    }
+
+    private static func isPersonalPath(_ path: String) -> Bool {
+        let components = path
+            .lowercased()
+            .split(separator: "/")
+            .map(String.init)
+        return components.contains("personal") && !components.contains("shopify")
+    }
+
+    private static func containsShopify(_ path: String) -> Bool {
+        path.lowercased()
+            .split(separator: "/")
+            .contains("shopify")
+    }
+
+    private static func decimal(_ value: String) -> Decimal {
+        Decimal(string: value) ?? 0
+    }
+
+    private struct DemoSpendEntry {
+        var harness: HarnessID
+        var sessionID: String
+        var projectName: String
+        var cwd: String
+        var model: String
+        var tokens: UsageTokenBreakdown
+        var costUSD: Decimal
     }
 }
 

@@ -155,7 +155,7 @@ struct SpendSummary: Equatable, Sendable {
 
     init(
         snapshots: [HarnessUsageSnapshot],
-        timeframe: SpendTimeframe = .last30Days,
+        timeframe: SpendTimeframe = .today,
         now: Date = Date(),
         calendar: Calendar = .current
     ) {
