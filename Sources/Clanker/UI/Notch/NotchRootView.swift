@@ -48,14 +48,18 @@ struct NotchRootView: View {
 
             Group {
                 if viewModel.isExpanded {
+                    // Content trails the morph by a beat (stagger), arriving
+                    // as the shape finishes growing; on close it vanishes
+                    // ahead of the shrink so the silhouette never crushes
+                    // visible content.
                     ExpandedContent(viewModel: viewModel)
                         .padding(.top, 6)
                         .transition(
                             .asymmetric(
                                 insertion: .opacity
-                                    .combined(with: .offset(y: -4))
-                                    .animation(NotchMotion.content.delay(0.06)),
-                                removal: .opacity.animation(.easeOut(duration: 0.12))
+                                    .combined(with: .offset(y: -5))
+                                    .animation(NotchMotion.content.delay(0.05)),
+                                removal: .opacity.animation(.easeOut(duration: 0.09))
                             )
                         )
                 } else {
@@ -65,8 +69,8 @@ struct NotchRootView: View {
                             .asymmetric(
                                 insertion: .opacity
                                     .combined(with: .offset(y: 2))
-                                    .animation(NotchMotion.content.delay(0.04)),
-                                removal: .opacity.animation(.easeOut(duration: 0.10))
+                                    .animation(NotchMotion.content.delay(0.05)),
+                                removal: .opacity.animation(.easeOut(duration: 0.08))
                             )
                         )
                 }
@@ -79,9 +83,16 @@ struct NotchRootView: View {
         // `GlobalNotchEventMonitor` so they work even when the panel has
         // `ignoresMouseEvents = true` (closed state). SwiftUI's `.onHover`
         // and `.onTapGesture` would otherwise see nothing in that mode.
-        .animation(NotchMotion.morph, value: topRadius)
-        .animation(NotchMotion.morph, value: bottomRadius)
-        .animation(NotchMotion.morph, value: viewModel.isExpanded)
+        //
+        // Asymmetric morph: the animation attached to these value changes is
+        // re-resolved at each flip, so opening springs and closing snaps.
+        .animation(morphAnimation, value: topRadius)
+        .animation(morphAnimation, value: bottomRadius)
+        .animation(morphAnimation, value: viewModel.isExpanded)
+    }
+
+    private var morphAnimation: Animation {
+        viewModel.isExpanded ? NotchMotion.morphOpen : NotchMotion.morphClose
     }
 }
 
@@ -187,7 +198,10 @@ private struct ExpandedContent: View {
         // Directional transition: the entering pane slides in from the
         // direction you're navigating toward, and the exiting pane slides
         // out the opposite way — like a camera panning along a horizontal
-        // strip of [Sessions | Recents | Spend].
+        // strip of [Sessions | Recents | Spend]. The slide is a short 24pt
+        // offset (not a full-width move) with a touch of blur bridging the
+        // crossfade, so the swap reads as one continuous surface instead of
+        // two pages trading places.
         let insertionEdge: Edge = viewModel.tabDirection == .forward ? .trailing : .leading
         let removalEdge: Edge = viewModel.tabDirection == .forward ? .leading : .trailing
 
@@ -201,8 +215,8 @@ private struct ExpandedContent: View {
         .id(viewModel.selectedPane)
         .transition(
             .asymmetric(
-                insertion: .opacity.combined(with: .move(edge: insertionEdge)),
-                removal: .opacity.combined(with: .move(edge: removalEdge))
+                insertion: .paneSlide(from: insertionEdge),
+                removal: .paneSlide(from: removalEdge)
             )
             .animation(NotchMotion.tab)
         )
@@ -224,8 +238,12 @@ private struct ExpandedContent: View {
                         SessionGroupView(
                             group: group,
                             edgeInset: Self.edgeInset,
+                            replyTargetID: viewModel.replyTargetID,
                             onActivate: { viewModel.activate($0) },
-                            onClose: { viewModel.closeSession($0, allowProcessTermination: $1) }
+                            onClose: { viewModel.closeSession($0, allowProcessTermination: $1) },
+                            onBeginReply: { viewModel.beginReply($0) },
+                            onCancelReply: { viewModel.cancelReply() },
+                            onSubmitReply: { viewModel.submitReply($1, to: $0) }
                         )
                     }
                 }
@@ -311,6 +329,34 @@ private struct ExpandedContent: View {
     }
 }
 
+// MARK: - Pane transition
+
+/// Short directional slide + crossfade + blur bridge for pane swaps. The
+/// blur masks the crossfade's mid-point mushiness so the motion reads as a
+/// clean pan.
+private struct PaneSlideModifier: ViewModifier {
+    var offsetX: CGFloat
+    var blur: CGFloat
+    var opacity: Double
+
+    func body(content: Content) -> some View {
+        content
+            .offset(x: offsetX)
+            .opacity(opacity)
+            .blur(radius: blur)
+    }
+}
+
+private extension AnyTransition {
+    static func paneSlide(from edge: Edge) -> AnyTransition {
+        let distance: CGFloat = edge == .trailing ? 24 : -24
+        return .modifier(
+            active: PaneSlideModifier(offsetX: distance, blur: 4, opacity: 0),
+            identity: PaneSlideModifier(offsetX: 0, blur: 0, opacity: 1)
+        )
+    }
+}
+
 // MARK: - Pane tabs
 
 private struct PaneTabBar: View {
@@ -320,6 +366,10 @@ private struct PaneTabBar: View {
     let spendCount: Int
     let attentionCount: Int
     let onSelect: (NotchPane) -> Void
+
+    /// One shared pill that glides between tabs instead of fading out of one
+    /// and into the next — selection reads as a single moving object.
+    @Namespace private var pillNamespace
 
     var body: some View {
         HStack(spacing: 4) {
@@ -341,6 +391,7 @@ private struct PaneTabBar: View {
             )
             Spacer(minLength: 0)
         }
+        .animation(NotchMotion.tab, value: selected)
     }
 
     @ViewBuilder
@@ -376,15 +427,18 @@ private struct PaneTabBar: View {
             .padding(.horizontal, 10)
             .padding(.vertical, 4)
             .background {
-                Capsule(style: .continuous)
-                    .fill(.white.opacity(isSelected ? 0.10 : 0.0))
-                    .overlay(
-                        Capsule(style: .continuous)
-                            .stroke(.white.opacity(isSelected ? 0.10 : 0.0), lineWidth: 0.5)
-                    )
+                if isSelected {
+                    Capsule(style: .continuous)
+                        .fill(.white.opacity(0.10))
+                        .overlay(
+                            Capsule(style: .continuous)
+                                .stroke(.white.opacity(0.10), lineWidth: 0.5)
+                        )
+                        .matchedGeometryEffect(id: "pane-pill", in: pillNamespace)
+                }
             }
         }
-        .buttonStyle(.plain)
+        .buttonStyle(NotchPressButtonStyle(pressedScale: 0.96))
         .contentShape(Capsule(style: .continuous))
         .frame(minWidth: 98, minHeight: 32)
         .animation(NotchMotion.hover, value: isSelected)
@@ -812,8 +866,12 @@ private struct RecentProjectGroupHeader: View {
 private struct SessionGroupView: View {
     let group: SessionGroup
     let edgeInset: CGFloat
+    var replyTargetID: String? = nil
     let onActivate: (AgentSession) -> Void
     let onClose: (AgentSession, Bool) -> Void
+    var onBeginReply: (AgentSession) -> Void = { _ in }
+    var onCancelReply: () -> Void = {}
+    var onSubmitReply: (AgentSession, String) -> Bool = { _, _ in false }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
@@ -825,8 +883,12 @@ private struct SessionGroupView: View {
                     SessionRow(
                         session: session,
                         groupCwd: group.sessions.first?.cwd,
+                        isReplying: replyTargetID == session.id,
                         onActivate: { onActivate(session) },
-                        onClose: { allowTermination in onClose(session, allowTermination) }
+                        onClose: { allowTermination in onClose(session, allowTermination) },
+                        onBeginReply: { onBeginReply(session) },
+                        onCancelReply: onCancelReply,
+                        onSubmitReply: { text in onSubmitReply(session, text) }
                     )
                         .padding(.horizontal, edgeInset)
                         .transition(.opacity.combined(with: .offset(y: 4)))
@@ -923,31 +985,54 @@ private struct SessionRow: View {
     /// The cwd of the group — when the session's cwd matches, we hide it
     /// to avoid repeating what the group header already states.
     var groupCwd: String? = nil
+    var isReplying: Bool = false
     let onActivate: () -> Void
     var onClose: (Bool) -> Void = { _ in }
+    var onBeginReply: () -> Void = {}
+    var onCancelReply: () -> Void = {}
+    var onSubmitReply: (String) -> Bool = { _ in false }
 
     @State private var hovering = false
     @State private var showingCloseConfirmation = false
 
     var body: some View {
-        HStack(spacing: 8) {
-            Button(action: onActivate) {
-                primaryContent
-            }
-            .buttonStyle(.plain)
-            .help(focusHelp)
+        VStack(spacing: 0) {
+            HStack(spacing: 8) {
+                Button(action: onActivate) {
+                    primaryContent
+                }
+                // Wide surface → whisper of a press (full 0.97 reads jumpy
+                // at row width).
+                .buttonStyle(NotchPressButtonStyle(pressedScale: 0.985))
+                .help(focusHelp)
 
-            if (hovering || showingCloseConfirmation), session.closeCapability.canClose {
-                SessionCloseButton(
-                    capability: session.closeCapability,
-                    action: handleCloseTap
+                if showsReplyButton {
+                    SessionReplyButton(action: onBeginReply)
+                        .padding(.trailing, session.closeCapability.canClose && (hovering || showingCloseConfirmation) ? 0 : 8)
+                        .transition(.opacity)
+                }
+
+                if (hovering || showingCloseConfirmation), session.closeCapability.canClose {
+                    SessionCloseButton(
+                        capability: session.closeCapability,
+                        action: handleCloseTap
+                    )
+                    .padding(.trailing, 8)
+                    .transition(.opacity)
+                }
+            }
+
+            if isReplying {
+                SessionReplyField(
+                    session: session,
+                    onCancel: onCancelReply,
+                    onSubmit: onSubmitReply
                 )
-                .padding(.trailing, 8)
-                .transition(.opacity)
+                .transition(.opacity.combined(with: .offset(y: -4)))
             }
         }
         .notchRowChrome(
-            hovering: hovering,
+            hovering: hovering || isReplying,
             accentColor: session.needsAttention ? NotchPalette.attention : nil,
             restingOpacity: 0.045,
             accentedRestingOpacity: 0.085,
@@ -963,6 +1048,13 @@ private struct SessionRow: View {
         } message: {
             Text("Clanker could not close this through a terminal tab. Terminating sends SIGTERM to the owned process group.")
         }
+    }
+
+    /// Reply affordance: always visible on rows blocked on the user (that is
+    /// the whole point of the feature), hover-revealed elsewhere.
+    private var showsReplyButton: Bool {
+        guard session.canReceiveReply, !isReplying else { return false }
+        return session.needsAttention || hovering
     }
 
     private var showCwd: Bool {
@@ -1016,6 +1108,104 @@ private struct SessionRow: View {
     }
 }
 
+private struct SessionReplyButton: View {
+    let action: () -> Void
+    @State private var hovering = false
+
+    var body: some View {
+        Button(action: action) {
+            Image(systemName: "arrowshape.turn.up.left.fill")
+                .font(.system(size: 9, weight: .bold))
+                .foregroundStyle(hovering ? .black : .white.opacity(0.65))
+                .frame(width: 18, height: 18)
+                .background(
+                    Circle()
+                        .fill(hovering ? NotchPalette.attention : .white.opacity(0.08))
+                )
+                .contentShape(Circle())
+        }
+        .buttonStyle(NotchPressButtonStyle(pressedScale: 0.88))
+        .onHover { hovering = $0 }
+        .help("Reply to this agent")
+        .animation(NotchMotion.hover, value: hovering)
+    }
+}
+
+/// Inline reply composer that appears beneath a session row. Enter sends,
+/// Esc dismisses; the notch stays pinned open while this exists.
+private struct SessionReplyField: View {
+    let session: AgentSession
+    let onCancel: () -> Void
+    let onSubmit: (String) -> Bool
+
+    @State private var draft = ""
+    @State private var sendFailed = false
+    @FocusState private var focused: Bool
+
+    var body: some View {
+        HStack(spacing: 6) {
+            Image(systemName: "arrowshape.turn.up.left.fill")
+                .font(.system(size: 8.5, weight: .bold))
+                .foregroundStyle(NotchPalette.attention.opacity(0.85))
+
+            TextField(placeholder, text: $draft)
+                .textFieldStyle(.plain)
+                .font(.system(size: 11.5, weight: .medium))
+                .foregroundStyle(.white)
+                .tint(NotchPalette.attention)
+                .focused($focused)
+                .onSubmit(submit)
+                .onExitCommand(perform: onCancel)
+
+            if sendFailed {
+                Text("Couldn't send")
+                    .font(.system(size: 9.5, weight: .semibold))
+                    .foregroundStyle(NotchPalette.error)
+                    .transition(.opacity)
+            }
+
+            Button(action: submit) {
+                Image(systemName: "arrow.up.circle.fill")
+                    .font(.system(size: 14, weight: .semibold))
+                    .foregroundStyle(canSend ? NotchPalette.attention : .white.opacity(0.25))
+            }
+            .buttonStyle(.plain)
+            .disabled(!canSend)
+            .help("Send to \(session.terminalName ?? "terminal")")
+        }
+        .padding(.horizontal, 10)
+        .padding(.top, 2)
+        .padding(.bottom, 8)
+        .onAppear {
+            // Let the row-expansion animation land before grabbing focus so
+            // the field editor doesn't fight the layout pass.
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                focused = true
+            }
+        }
+    }
+
+    private var canSend: Bool {
+        !draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
+    private var placeholder: String {
+        "Reply to \(session.harness == .terminal ? "shell" : session.harness.displayName)…"
+    }
+
+    private func submit() {
+        guard canSend else { return }
+        if onSubmit(draft) {
+            draft = ""
+        } else {
+            withAnimation(NotchMotion.hover) { sendFailed = true }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 2.2) {
+                withAnimation(NotchMotion.hover) { sendFailed = false }
+            }
+        }
+    }
+}
+
 private struct SessionCloseButton: View {
     let capability: SessionCloseCapability
     let action: () -> Void
@@ -1033,7 +1223,7 @@ private struct SessionCloseButton: View {
                 )
                 .contentShape(Circle())
         }
-        .buttonStyle(.plain)
+        .buttonStyle(NotchPressButtonStyle(pressedScale: 0.88))
         .onHover { hovering = $0 }
         .help(capability.closeHelpTitle)
         .animation(NotchMotion.hover, value: hovering)
@@ -1505,7 +1695,8 @@ private struct HarnessIcon: View {
         switch harness {
         case .codex: bundleID = "com.openai.codex"
         case .claude: bundleID = "com.anthropic.claudefordesktop"
-        case .pi, .terminal: bundleID = nil
+        case .cursor: bundleID = "com.todesktop.230313mzl4w4u92"
+        case .pi, .opencode, .gemini, .terminal: bundleID = nil
         }
         guard let bundleID,
               let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleID) else {
@@ -1522,6 +1713,12 @@ private struct HarnessIcon: View {
             [Color(red: 0.96, green: 0.55, blue: 0.34), Color(red: 0.78, green: 0.34, blue: 0.18)]
         case .pi:
             [Color(red: 0.34, green: 0.36, blue: 0.95), Color(red: 0.20, green: 0.18, blue: 0.62)]
+        case .opencode:
+            [Color(red: 0.24, green: 0.62, blue: 0.56), Color(red: 0.10, green: 0.36, blue: 0.32)]
+        case .gemini:
+            [Color(red: 0.36, green: 0.52, blue: 0.96), Color(red: 0.56, green: 0.30, blue: 0.86)]
+        case .cursor:
+            [Color(red: 0.28, green: 0.28, blue: 0.32), Color(red: 0.10, green: 0.10, blue: 0.14)]
         case .terminal:
             [Color(red: 0.30, green: 0.32, blue: 0.36), Color(red: 0.15, green: 0.16, blue: 0.18)]
         }

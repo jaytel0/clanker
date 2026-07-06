@@ -36,6 +36,8 @@ enum TerminalLauncher {
             return openITerm(at: path)
         case .ghostty:
             return openGhostty(at: path)
+        case .cmux:
+            return openCmux(at: path)
         case .warp:
             return openWarp(at: path)
         case .wezterm:
@@ -146,6 +148,26 @@ enum TerminalLauncher {
             if !pasteboardItems.isEmpty {
                 pasteboard.writeObjects(pasteboardItems)
             }
+        }
+    }
+
+    /// Cmux's CLI opens a directory in a new workspace and launches the app
+    /// if it isn't running.
+    private static func openCmux(at path: String) -> Bool {
+        let cli = "\(CmuxSupport.appPath)/Contents/Resources/bin/cmux"
+        guard FileManager.default.isExecutableFile(atPath: cli) else { return false }
+
+        let task = Process()
+        task.executableURL = URL(fileURLWithPath: cli)
+        task.arguments = [path]
+        task.standardOutput = FileHandle.nullDevice
+        task.standardError = FileHandle.nullDevice
+        do {
+            try task.run()
+            activate(appURL: URL(fileURLWithPath: CmuxSupport.appPath))
+            return true
+        } catch {
+            return false
         }
     }
 

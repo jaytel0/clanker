@@ -95,6 +95,12 @@ enum SessionTitleHeuristics {
             return "Claude Session"
         case .pi:
             return "Pi Session"
+        case .opencode:
+            return "OpenCode Session"
+        case .gemini:
+            return "Gemini Session"
+        case .cursor:
+            return "Cursor Session"
         }
     }
 }
@@ -238,12 +244,17 @@ enum SessionTitleText {
             "bash",
             "claude",
             "claude code",
+            "cmux",
             "codex",
             "codex app",
             "codex session",
+            "cursor agent",
             "fish",
+            "gemini",
+            "gemini cli",
             "ghostty",
             "openai codex",
+            "opencode",
             "pi",
             "pi session",
             "shell",
@@ -256,16 +267,9 @@ enum SessionTitleText {
             return true
         }
 
-        switch harness {
-        case .codex:
-            return normalized == HarnessID.codex.displayName.lowercased()
-        case .claude:
-            return normalized == HarnessID.claude.displayName.lowercased()
-        case .pi:
-            return normalized == HarnessID.pi.displayName.lowercased()
-        case .terminal:
-            return false
-        }
+        guard harness != .terminal else { return false }
+        return normalized == harness.displayName.lowercased()
+            || normalized == harness.defaultSessionTitle.lowercased()
     }
 
     private static func firstUsefulPhrase(in value: String) -> String? {

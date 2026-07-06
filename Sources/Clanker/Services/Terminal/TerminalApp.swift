@@ -7,7 +7,7 @@ import Foundation
 /// so Clanker keeps its own preferred terminal and falls back through this
 /// registry when that preference is missing or no longer installed.
 enum TerminalApp: CaseIterable, Identifiable, Equatable {
-    case terminal, iterm, ghostty, warp, wezterm, kitty, alacritty
+    case terminal, iterm, ghostty, cmux, warp, wezterm, kitty, alacritty
 
     var id: String { bundleID }
 
@@ -16,6 +16,7 @@ enum TerminalApp: CaseIterable, Identifiable, Equatable {
         case .terminal: "Terminal"
         case .iterm: "iTerm2"
         case .ghostty: "Ghostty"
+        case .cmux: "Cmux"
         case .warp: "Warp"
         case .wezterm: "WezTerm"
         case .kitty: "Kitty"
@@ -28,6 +29,7 @@ enum TerminalApp: CaseIterable, Identifiable, Equatable {
         case .terminal: "com.apple.Terminal"
         case .iterm: "com.googlecode.iterm2"
         case .ghostty: "com.mitchellh.ghostty"
+        case .cmux: CmuxSupport.bundleID
         case .warp: "dev.warp.Warp-Stable"
         case .wezterm: "com.github.wez.wezterm"
         case .kitty: "net.kovidgoyal.kitty"
@@ -48,6 +50,7 @@ enum TerminalApp: CaseIterable, Identifiable, Equatable {
     /// is always available as the safe final fallback.
     static let selectionOrder: [TerminalApp] = [
         .ghostty,
+        .cmux,
         .iterm,
         .warp,
         .wezterm,
@@ -83,6 +86,7 @@ enum TerminalApp: CaseIterable, Identifiable, Equatable {
         case "Terminal": .terminal
         case "iTerm", "iTerm2": .iterm
         case "Ghostty": .ghostty
+        case "Cmux", "cmux": .cmux
         case "Warp": .warp
         case "WezTerm": .wezterm
         case "Kitty": .kitty

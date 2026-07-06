@@ -123,7 +123,11 @@ final class GlobalNotchEventMonitor {
               let window,
               viewModel.isExpanded,
               window.isKeyWindow,
-              modifierFlags.isEmpty else {
+              modifierFlags.isEmpty,
+              // Typing in a text field (the inline reply composer) must reach
+              // the field editor, not trigger pane shortcuts — "1" is a
+              // perfectly good character in a reply.
+              !(window.firstResponder is NSTextView) else {
             return false
         }
 

@@ -49,6 +49,11 @@ final class NotchViewModel: ObservableObject {
     @Published var selectedSpendTimeframe: SpendTimeframe = .today
     @Published private(set) var isDemoMode = UserDefaults.standard.bool(forKey: NotchDemoMode.defaultsKey)
 
+    /// Session currently showing an inline reply field. While set, the notch
+    /// stays pinned open — losing a half-typed reply to a hover-out would be
+    /// brutal.
+    @Published private(set) var replyTargetID: String?
+
     /// Set by the controller so the view knows which display type is active.
     @Published var screenHasNotch = false
 
@@ -85,15 +90,24 @@ final class NotchViewModel: ObservableObject {
         sessionStore.$sessions
             .removeDuplicates()
             .sink { [weak self] sessions in
+                guard let self else { return }
                 // Only surface sessions backed by a currently running
                 // process / app / live terminal AND not finished. Transcript
                 // history and completed runs are useful internal context for
                 // the merger but they must not appear in the UI — ground
                 // truth is "is this thing actually running right now?"
                 // (matches what `w` shows for live TTYs).
-                self?.sessions = sessions
+                self.sessions = sessions
                     .filter { $0.isLive && $0.status != .completed }
                     .sortedForNotch()
+
+                // The reply target can vanish mid-composition (session ended,
+                // merged away). Drop the field rather than sending into a
+                // session that no longer exists.
+                if let replyTargetID = self.replyTargetID,
+                   !self.sessions.contains(where: { $0.id == replyTargetID }) {
+                    self.replyTargetID = nil
+                }
             }
             .store(in: &cancellables)
 
@@ -193,7 +207,7 @@ final class NotchViewModel: ObservableObject {
             recentsStore?.refreshOnDemand()
             usageStore?.refreshNow()
         }
-        withAnimation(NotchMotion.morph) {
+        withAnimation(isExpanded ? NotchMotion.morphClose : NotchMotion.morphOpen) {
             isExpanded.toggle()
         }
     }
@@ -239,8 +253,9 @@ final class NotchViewModel: ObservableObject {
 
     func collapse() {
         cancelHoverTasks()
+        cancelReply()
         guard isExpanded else { return }
-        withAnimation(NotchMotion.morph) {
+        withAnimation(NotchMotion.morphClose) {
             isExpanded = false
         }
     }
@@ -249,6 +264,39 @@ final class NotchViewModel: ObservableObject {
     func activate(_ session: AgentSession) {
         TerminalFocusService.focus(session)
         collapse()
+    }
+
+    // MARK: - Inline reply
+
+    func beginReply(_ session: AgentSession) {
+        guard session.canReceiveReply else { return }
+        withAnimation(NotchMotion.row) {
+            replyTargetID = session.id
+        }
+    }
+
+    func cancelReply() {
+        guard replyTargetID != nil else { return }
+        withAnimation(NotchMotion.row) {
+            replyTargetID = nil
+        }
+    }
+
+    /// Sends the reply into the owning terminal. Returns whether delivery
+    /// was dispatched so the row can show feedback.
+    @discardableResult
+    func submitReply(_ text: String, to session: AgentSession) -> Bool {
+        let sent = SessionReplyService.send(text, to: session)
+        if sent {
+            withAnimation(NotchMotion.row) {
+                replyTargetID = nil
+            }
+            // Refresh soon so the row's status reflects the unblocked agent.
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) { [weak self] in
+                self?.sessionStore.refreshNow()
+            }
+        }
+        return sent
     }
 
     /// Close the terminal window/tab that owns this session. Destructive
@@ -290,19 +338,48 @@ final class NotchViewModel: ObservableObject {
 
     // MARK: - Hover scheduling
 
+    /// Brief intent delay before hover-open. Long enough to swallow a cursor
+    /// grazing the notch on its way across the menu bar, short enough that a
+    /// deliberate hover still feels immediate.
+    private static let hoverOpenDelay: TimeInterval = 0.10
+
+    /// Grace period before hover-close. The cursor briefly clipping the edge
+    /// of the shape must not slam the notch shut mid-read; returning within
+    /// the grace window cancels the close.
+    private static let hoverCloseGrace: TimeInterval = 0.22
+
     private func scheduleHoverOpen() {
-        guard !isExpanded else { return }
-        recentsStore?.refreshOnDemand()
-        usageStore?.refreshNow()
-        withAnimation(NotchMotion.morph) {
-            isExpanded = true
+        guard !isExpanded, hoverOpenTask == nil else { return }
+        hoverOpenTask = Task { [weak self] in
+            try? await Task.sleep(nanoseconds: UInt64(Self.hoverOpenDelay * 1_000_000_000))
+            guard !Task.isCancelled, let self else { return }
+            self.hoverOpenTask = nil
+            guard self.isHovering, !self.isExpanded else { return }
+
+            // Refresh right as the notch opens so the lists are current at
+            // the moment the user looks at them.
+            self.recentsStore?.refreshOnDemand()
+            self.usageStore?.refreshNow()
+            withAnimation(NotchMotion.morphOpen) {
+                self.isExpanded = true
+            }
         }
     }
 
     private func scheduleHoverClose() {
-        guard isExpanded else { return }
-        withAnimation(NotchMotion.morph) {
-            isExpanded = false
+        guard isExpanded, hoverCloseTask == nil else { return }
+        hoverCloseTask = Task { [weak self] in
+            try? await Task.sleep(nanoseconds: UInt64(Self.hoverCloseGrace * 1_000_000_000))
+            guard !Task.isCancelled, let self else { return }
+            self.hoverCloseTask = nil
+            guard !self.isHovering, self.isExpanded else { return }
+            // Pinned open while a reply is being composed — mousing away must
+            // not destroy a half-typed answer. An explicit click outside or
+            // Esc still dismisses via `collapse()`.
+            guard self.replyTargetID == nil else { return }
+            withAnimation(NotchMotion.morphClose) {
+                self.isExpanded = false
+            }
         }
     }
 
@@ -493,23 +570,84 @@ extension Array where Element == AgentSession {
 }
 
 /// Shared motion vocabulary so every transition feels related.
+///
+/// Principles (after Emil Kowalski):
+///   * **Asymmetric timing** — entrances get personality, exits get out of
+///     the way. Closing is always faster and fully damped.
+///   * **Everything under ~300ms** — frequent interactions must never make
+///     the user wait on motion.
+///   * **Reduced motion is honored** — springs and slides collapse to brief
+///     opacity-dominant eases, never to nothing (state changes still read).
 enum NotchMotion {
-    /// Container morph — slightly snappy, very low overshoot. Tuned to match
-    /// the system Dynamic Island feel.
-    static let morph: Animation = .spring(response: 0.30, dampingFraction: 0.78, blendDuration: 0)
+    private static var reduceMotion: Bool {
+        NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
+    }
 
-    /// Content fade/slide once the morph has settled.
-    static let content: Animation = .spring(response: 0.34, dampingFraction: 0.92, blendDuration: 0)
+    /// Container morph, opening — quick with a whisper of overshoot so the
+    /// expansion feels alive without wobbling.
+    static var morphOpen: Animation {
+        reduceMotion
+            ? .easeOut(duration: 0.14)
+            : .spring(response: 0.28, dampingFraction: 0.76, blendDuration: 0)
+    }
 
-    /// Row insert/remove — a touch springier so list shifts feel alive.
-    static let row: Animation = .spring(response: 0.45, dampingFraction: 0.82, blendDuration: 0)
+    /// Container morph, closing — faster than opening and fully damped.
+    /// A dismissal that bounces overstays its welcome.
+    static var morphClose: Animation {
+        reduceMotion
+            ? .easeOut(duration: 0.12)
+            : .spring(response: 0.22, dampingFraction: 0.96, blendDuration: 0)
+    }
 
-    /// Hover micro-scale; very fast.
-    static let hover: Animation = .spring(response: 0.18, dampingFraction: 0.82, blendDuration: 0)
+    /// Content fade/slide layered on top of the morph.
+    static var content: Animation {
+        reduceMotion
+            ? .easeOut(duration: 0.12)
+            : .spring(response: 0.28, dampingFraction: 0.9, blendDuration: 0)
+    }
 
-    /// Pane-to-pane swap inside the expanded notch. Apple's pre-tuned
-    /// snappy spring — the same one SwiftUI uses for system segmented
-    /// controls and `NavigationSplitView` column toggles. Quick (220ms),
-    /// barely any overshoot, settles instantly.
-    static let tab: Animation = .snappy(duration: 0.22, extraBounce: 0)
+    /// Row insert/remove — springy enough that list shifts feel alive, quick
+    /// enough that a busy session list never lags its data.
+    static var row: Animation {
+        reduceMotion
+            ? .easeOut(duration: 0.12)
+            : .spring(response: 0.38, dampingFraction: 0.85, blendDuration: 0)
+    }
+
+    /// Hover micro-scale; near-instant.
+    static var hover: Animation {
+        reduceMotion
+            ? .easeOut(duration: 0.08)
+            : .spring(response: 0.15, dampingFraction: 0.85, blendDuration: 0)
+    }
+
+    /// Press-down half of button feedback. Deliberately plain ease-out —
+    /// the press must feel like contact, the spring belongs on the release
+    /// (see `NotchPressButtonStyle`).
+    static var pressDown: Animation {
+        .easeOut(duration: 0.08)
+    }
+
+    /// Pane-to-pane swap inside the expanded notch.
+    static var tab: Animation {
+        reduceMotion
+            ? .easeOut(duration: 0.12)
+            : .snappy(duration: 0.18, extraBounce: 0)
+    }
+}
+
+/// Scale-on-press feedback (0.97 by default) with asymmetric timing: a fast
+/// plain ease down on press, a springy release back up. Applies uniformly so
+/// every pressable surface in the notch answers the finger the same way.
+struct NotchPressButtonStyle: ButtonStyle {
+    var pressedScale: CGFloat = 0.97
+
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .scaleEffect(configuration.isPressed ? pressedScale : 1)
+            .animation(
+                configuration.isPressed ? NotchMotion.pressDown : NotchMotion.hover,
+                value: configuration.isPressed
+            )
+    }
 }

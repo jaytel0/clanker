@@ -10,7 +10,7 @@
 
 <p align="center">
   <img src="https://img.shields.io/badge/macOS-14%2B-black?style=flat-square" />
-  <img src="https://img.shields.io/badge/version-0.4.2-black?style=flat-square" />
+  <img src="https://img.shields.io/badge/version-0.5.0-black?style=flat-square" />
   <img src="https://img.shields.io/badge/Swift-6-orange?style=flat-square" />
 </p>
 
@@ -24,9 +24,13 @@
 
 Clanker lives in your MacBook's notch. Hover to expand — see every running agent session and recently visited project at a glance, then click to jump straight to it.
 
-- **Sessions** — tracks Codex, Claude, Pi, and bare terminal sessions automatically
+- **Sessions** — tracks Codex, Claude Code, Pi, OpenCode, Gemini CLI, Cursor Agent, and bare terminal sessions automatically
+- **Terminals** — understands Terminal.app, iTerm2, Ghostty, Cmux, Warp, WezTerm, Kitty, Alacritty, tmux panes, and editor-embedded shells
+- **Live status** — working / running tool / needs approval / needs input, derived from transcript heartbeats and per-process CPU rather than guesses
+- **Attention alerts** — a macOS notification fires when an agent needs approval, input, or hits an error, with an inline Reply field right in the banner
+- **Inline reply** — answer a blocked agent from the notch or the notification; Clanker types your reply into the owning tmux pane, Cmux panel, iTerm session, or terminal window
 - **Recents** — surfaces your most recently visited git repos from your project roots
-- **Focus** — click any session to raise the exact terminal window
+- **Focus** — click any session to raise the exact terminal window (exact pane in Cmux and tmux)
 
 ## Install
 

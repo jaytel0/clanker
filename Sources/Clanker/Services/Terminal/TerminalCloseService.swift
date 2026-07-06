@@ -30,6 +30,11 @@ enum SessionCloseCapabilityResolver {
             return tty?.isEmpty == false
         case .ghostty, .warp, .wezterm, .kitty, .alacritty:
             return true
+        case .cmux:
+            // A Cmux window hosts many workspaces; AX-closing the window
+            // would take unrelated sessions with it. Without a verified
+            // per-surface close, offer process termination only.
+            return false
         }
     }
 }
@@ -71,7 +76,7 @@ enum TerminalCloseService {
             if closeAXWindow(for: .ghostty, session: session) { return true }
         case .warp, .wezterm, .kitty, .alacritty:
             if let terminal, closeAXWindow(for: terminal, session: session) { return true }
-        case .none:
+        case .cmux, .none:
             break
         }
 

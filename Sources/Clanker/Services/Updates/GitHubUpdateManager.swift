@@ -279,7 +279,7 @@ final class GitHubUpdateManager: ObservableObject {
 
             state = .installing
             try fileManager.createDirectory(at: extractionURL, withIntermediateDirectories: true)
-            try await ProcessRunner.run("/usr/bin/ditto", arguments: ["-x", "-k", zipURL.path, extractionURL.path])
+            try await UpdateProcessRunner.run("/usr/bin/ditto", arguments: ["-x", "-k", zipURL.path, extractionURL.path])
 
             guard let candidateAppURL = findExtractedApp(in: extractionURL) else {
                 throw UpdateError.extractedAppMissing
@@ -289,7 +289,7 @@ final class GitHubUpdateManager: ObservableObject {
 
             let installerURL = tempRoot.appendingPathComponent("install-clanker-update.zsh")
             try writeInstallerScript(to: installerURL)
-            try await ProcessRunner.launchDetached(
+            try await UpdateProcessRunner.launchDetached(
                 "/bin/zsh",
                 arguments: [installerURL.path, candidateAppURL.path, targetBundleURL.path, tempRoot.path, String(ProcessInfo.processInfo.processIdentifier)]
             )
@@ -383,7 +383,7 @@ final class GitHubUpdateManager: ObservableObject {
 
     private func verifyCandidateSignature(_ appURL: URL) async throws {
         do {
-            try await ProcessRunner.run("/usr/bin/codesign", arguments: ["--verify", "--deep", "--strict", appURL.path])
+            try await UpdateProcessRunner.run("/usr/bin/codesign", arguments: ["--verify", "--deep", "--strict", appURL.path])
         } catch {
             throw UpdateError.signatureInvalid
         }
@@ -545,7 +545,7 @@ private enum UpdateError: LocalizedError {
     }
 }
 
-private enum ProcessRunner {
+private enum UpdateProcessRunner {
     static func run(_ executable: String, arguments: [String]) async throws {
         try await withCheckedThrowingContinuation { continuation in
             let process = Process()

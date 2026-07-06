@@ -4,6 +4,9 @@ enum HarnessID: String, CaseIterable, Identifiable, Sendable {
     case codex
     case claude
     case pi
+    case opencode
+    case gemini
+    case cursor
     case terminal
 
     var id: String { rawValue }
@@ -13,6 +16,23 @@ enum HarnessID: String, CaseIterable, Identifiable, Sendable {
         case .codex: "OpenAI Codex"
         case .claude: "Claude"
         case .pi: "Pi"
+        case .opencode: "OpenCode"
+        case .gemini: "Gemini CLI"
+        case .cursor: "Cursor Agent"
+        case .terminal: "Terminal"
+        }
+    }
+
+    /// Placeholder row title used until a transcript or generated title
+    /// provides something more specific.
+    var defaultSessionTitle: String {
+        switch self {
+        case .codex: "Codex"
+        case .claude: "Claude Code"
+        case .pi: "Pi"
+        case .opencode: "OpenCode"
+        case .gemini: "Gemini"
+        case .cursor: "Cursor Agent"
         case .terminal: "Terminal"
         }
     }
@@ -22,6 +42,9 @@ enum HarnessID: String, CaseIterable, Identifiable, Sendable {
         case .codex: "circle.hexagongrid.fill"
         case .claude: "sparkle.magnifyingglass"
         case .pi: "pi"
+        case .opencode: "chevron.left.forwardslash.chevron.right"
+        case .gemini: "sparkles"
+        case .cursor: "cursorarrow"
         case .terminal: "apple.terminal.fill"
         }
     }
@@ -215,6 +238,15 @@ struct AgentSession: Identifiable, Equatable, Sendable {
 
     var needsAttention: Bool {
         status.needsAttention
+    }
+
+    /// Whether Clanker has a way to type a reply into this session — a tmux
+    /// pane, a Cmux panel, or a known terminal window it can focus and
+    /// deliver pid-targeted keystrokes to.
+    var canReceiveReply: Bool {
+        guard isLive else { return false }
+        return terminalContext.tmuxTarget != nil
+            || terminalContext.terminalBundleID != nil
     }
 
     var countsAsLiveActive: Bool {

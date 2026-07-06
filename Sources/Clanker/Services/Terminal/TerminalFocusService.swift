@@ -60,6 +60,18 @@ enum TerminalFocusService {
             if focusAXWindow(for: .ghostty, session: session) { return true }
             return activate(bundleID: TerminalApp.ghostty.bundleID) || tmuxSelected
 
+        case .cmux:
+            // Cmux's CLI raises the exact pane over its control socket —
+            // strictly better than window scoring. It only lands the user on
+            // the right workspace though; still activate the app after.
+            if let panelID = session.terminalContext.terminalSessionID,
+               CmuxSupport.focusPanel(id: panelID) {
+                _ = activate(bundleID: TerminalApp.cmux.bundleID)
+                return true
+            }
+            if focusAXWindow(for: .cmux, session: session) { return true }
+            return activate(bundleID: TerminalApp.cmux.bundleID) || tmuxSelected
+
         case .warp, .wezterm, .kitty, .alacritty:
             guard let terminal else { return false }
             if focusAXWindow(for: terminal, session: session) { return true }
@@ -406,7 +418,7 @@ enum TerminalFocusService {
         switch session.harness {
         case .pi:
             if isPiWindow { score += 25 }
-        case .codex, .claude, .terminal:
+        case .codex, .claude, .opencode, .gemini, .cursor, .terminal:
             if !isPiWindow { score += 15 }
         }
 
@@ -434,7 +446,7 @@ enum TerminalFocusService {
         switch session.harness {
         case .pi:
             score += isPiWindow ? 80 : -50
-        case .codex, .claude:
+        case .codex, .claude, .opencode, .gemini, .cursor:
             if isCodexLikeWindow { score += 45 }
             if isPiWindow { score -= 70 }
         case .terminal:
@@ -509,6 +521,9 @@ enum TerminalFocusService {
             "claude session",
             "pi",
             "pi session",
+            "opencode",
+            "gemini",
+            "cursor agent",
             "terminal",
             "shell"
         ]

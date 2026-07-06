@@ -25,11 +25,23 @@ struct SettingsView: View {
 // MARK: - General
 
 private struct GeneralSettingsView: View {
+    @AppStorage(AttentionNotifier.enabledDefaultsKey) private var attentionNotificationsEnabled = true
+    @AppStorage(AttentionNotifier.soundDefaultsKey) private var attentionNotificationSound = false
+
     var body: some View {
         Form {
             Section("Clanker") {
                 Text("Local-first dynamic-notch monitor for coding-agent sessions.")
-                Text("Harness adapters discover Codex, Claude, Pi, and bare terminal sessions automatically.")
+                Text("Harness adapters discover Codex, Claude Code, Pi, OpenCode, Gemini CLI, Cursor Agent, and bare terminal sessions automatically.")
+                    .foregroundStyle(.secondary)
+            }
+
+            Section("Attention Alerts") {
+                Toggle("Notify when an agent needs approval or input", isOn: $attentionNotificationsEnabled)
+                Toggle("Play a sound", isOn: $attentionNotificationSound)
+                    .disabled(!attentionNotificationsEnabled)
+                Text("Notifications include an inline Reply field, so you can answer the agent without switching to its terminal. Replies are typed directly into the owning tmux pane, Cmux panel, or terminal window.")
+                    .font(.caption)
                     .foregroundStyle(.secondary)
             }
         }

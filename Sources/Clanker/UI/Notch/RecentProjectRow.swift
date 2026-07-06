@@ -20,7 +20,7 @@ struct RecentProjectRow: View {
             Button(action: onPrimary) {
                 primaryContent
             }
-            .buttonStyle(.plain)
+            .buttonStyle(NotchPressButtonStyle(pressedScale: 0.985))
             .help("Open \(project.name) in \(TerminalLauncher.preferredDisplayName)")
 
             actionCluster
@@ -172,7 +172,7 @@ private struct RecentActionIconButton<Icon: View>: View {
                         .stroke(.white.opacity(hovering && !disabled ? 0.14 : 0.0), lineWidth: 0.5)
                 )
         }
-        .buttonStyle(.plain)
+        .buttonStyle(NotchPressButtonStyle(pressedScale: 0.9))
         .disabled(disabled)
         .onHover { hovering = $0 && !disabled }
         .help(tooltip)

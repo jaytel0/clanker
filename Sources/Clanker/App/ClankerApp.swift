@@ -17,6 +17,7 @@ struct ClankerApp: App {
 final class AppDelegate: NSObject, NSApplicationDelegate {
     private let sessionStore = LocalSessionStore()
     private let usageStore = HarnessUsageStore()
+    private let attentionNotifier = AttentionNotifier()
     private lazy var recentsStore = RecentProjectsStore(sessionStore: sessionStore)
     let updateManager = GitHubUpdateManager.shared
     private let displaySettings = NotchDisplaySettings.shared
@@ -38,6 +39,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         usageStore.start()
         recentsStore.start()
         updateManager.start()
+
+        attentionNotifier.start()
+        sessionStore.$sessions
+            .sink { [weak self] sessions in
+                self?.attentionNotifier.update(sessions: sessions)
+            }
+            .store(in: &cancellables)
 
         if RecentsSettings.shared.hasCompletedSetup {
             showNotch()
@@ -176,6 +184,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                         session.title,
                         "pid=\(session.pid.map(String.init) ?? "-")",
                         "tty=\(session.tty ?? "-")",
+                        "term=\(session.terminalName ?? "-")",
                         "live=\(session.isLive)",
                         "cwd=\(session.cwd)"
                     ].joined(separator: " | "))

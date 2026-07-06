@@ -11,8 +11,13 @@ let package = Package(
         .executable(name: "Clanker", targets: ["Clanker"])
     ],
     targets: [
+        .target(
+            name: "CProcInfo",
+            path: "Sources/CProcInfo"
+        ),
         .executableTarget(
             name: "Clanker",
+            dependencies: ["CProcInfo"],
             path: "Sources/Clanker",
             exclude: [
                 "Services/Harnesses/AGENTS.md",

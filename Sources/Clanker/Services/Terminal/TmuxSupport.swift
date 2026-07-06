@@ -20,7 +20,7 @@ struct TmuxPane: Equatable, Sendable {
 enum TmuxSupport {
     static func listPanes() -> [TmuxPane] {
         guard let tmux = tmuxPath() else { return [] }
-        let output = run(tmux, [
+        let output = ProcessRunner.run(tmux, [
             "list-panes",
             "-a",
             "-F",
@@ -43,8 +43,21 @@ enum TmuxSupport {
         let windowTarget = target.lastIndex(of: ".")
             .map { String(target[..<$0]) }
             ?? target
-        _ = runWithStatus(tmux, ["select-window", "-t", windowTarget])
-        return runWithStatus(tmux, ["select-pane", "-t", target])
+        _ = ProcessRunner.runWithStatus(tmux, ["select-window", "-t", windowTarget])
+        return ProcessRunner.runWithStatus(tmux, ["select-pane", "-t", target])
+    }
+
+    /// Types `text` into the pane and presses Enter. `-l` sends the text
+    /// literally (no key-name interpretation) so replies containing words
+    /// like "Enter" or semicolons arrive verbatim.
+    @discardableResult
+    static func sendText(_ text: String, to target: String, pressReturn: Bool = true) -> Bool {
+        guard let tmux = tmuxPath() else { return false }
+        guard ProcessRunner.runWithStatus(tmux, ["send-keys", "-t", target, "-l", "--", text]) else {
+            return false
+        }
+        guard pressReturn else { return true }
+        return ProcessRunner.runWithStatus(tmux, ["send-keys", "-t", target, "Enter"])
     }
 
     static func parsePaneLine(_ line: String) -> TmuxPane? {
@@ -75,7 +88,7 @@ enum TmuxSupport {
             return path
         }
 
-        let resolved = run("/usr/bin/which", ["tmux"])
+        let resolved = ProcessRunner.run("/usr/bin/which", ["tmux"])
             .trimmingCharacters(in: .whitespacesAndNewlines)
         guard !resolved.isEmpty,
               FileManager.default.isExecutableFile(atPath: resolved) else {
@@ -84,50 +97,11 @@ enum TmuxSupport {
         return resolved
     }
 
-    private static func run(_ executable: String, _ arguments: [String]) -> String {
-        let process = Process()
-        let pipe = Pipe()
-        process.executableURL = URL(fileURLWithPath: executable)
-        process.arguments = arguments
-        process.standardOutput = pipe
-        process.standardError = FileHandle.nullDevice
-
-        do {
-            try process.run()
-            let data = pipe.fileHandleForReading.readDataToEndOfFile()
-            process.waitUntilExit()
-            return String(data: data, encoding: .utf8) ?? ""
-        } catch {
-            return ""
-        }
-    }
-
-    private static func runWithStatus(_ executable: String, _ arguments: [String]) -> Bool {
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: executable)
-        process.arguments = arguments
-        process.standardOutput = FileHandle.nullDevice
-        process.standardError = FileHandle.nullDevice
-
-        do {
-            try process.run()
-            process.waitUntilExit()
-            return process.terminationStatus == 0
-        } catch {
-            return false
-        }
-    }
-
     private static func normalizedTTY(_ raw: String) -> String? {
-        let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty, trimmed != "??", trimmed != "-" else { return nil }
-        if trimmed.hasPrefix("/dev/") { return trimmed }
-        if trimmed.hasPrefix("tty") { return "/dev/\(trimmed)" }
-        return "/dev/tty\(trimmed)"
+        DiscoveryHelpers.normalizedTTY(raw)
     }
 
     private static func nonEmpty(_ raw: String) -> String? {
-        let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
-        return trimmed.isEmpty ? nil : trimmed
+        raw.nonEmpty
     }
 }
